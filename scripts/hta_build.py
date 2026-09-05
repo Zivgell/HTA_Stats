@@ -44,6 +44,24 @@ def collect(cfg: dict) -> dict:
     schedule = read_json(DATA / "schedule_status.json", default={}) or {}
     delta = read_json(DATA / "last_delta.json", default={}) or {}
     fixtures = (read_json(DATA / "fixtures.json", default={}) or {}).get("fixtures", [])
+
+    # The CI build deliberately skips hta_schedule.py - that exists only to drive the
+    # Windows task - so there is no schedule_status.json there. Fall back to the fixture
+    # list so the "next match" tile still appears on the published page.
+    if not schedule.get("next_match") and fixtures:
+        nxt = next((f for f in fixtures if f.get("start_time")), None)
+        if nxt:
+            local = datetime.fromisoformat(nxt["start_time"].replace("Z", "+00:00")).astimezone(
+                ZoneInfo(cfg["timezone"])
+            )
+            schedule = dict(schedule)
+            schedule["next_match"] = {
+                "game_id": nxt.get("game_id"),
+                "competition": nxt.get("competition_name"),
+                "home": nxt.get("home"),
+                "away": nxt.get("away"),
+                "kickoff_local": local.strftime("%Y-%m-%d %H:%M"),
+            }
     fetch_status = read_json(DATA / "fetch_status.json", default={}) or {}
 
     matches = []

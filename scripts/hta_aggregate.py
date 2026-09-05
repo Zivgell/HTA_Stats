@@ -189,10 +189,44 @@ def accumulate(matches: list[dict], cfg: dict) -> dict:
     }
 
 
-def build_delta(previous: dict | None, current: dict) -> dict:
+def delta_from_last_match(matches: list[dict]) -> dict:
+    """Derive the panel straight from the most recent match record.
+
+    Needed because the CI build starts with no stored aggregate - season_*.json is
+    generated, so it is gitignored - which made every cloud run look like a first load
+    and left the published page permanently showing "initial import" instead of what
+    actually happened in the last game. Reading the newest match is stateless, so the
+    PC and CI produce the same panel.
+    """
+    if not matches:
+        return {"is_first_run": True, "changes": [], "new_matches": 0}
+
+    newest = max(matches, key=lambda m: m.get("start_time") or "")
+    tracked = ("goals", "assists", "minutes", "yellow", "second_yellow", "red")
+
+    changes = []
+    for player in newest["players"]:
+        if (player.get("minutes") or 0) <= 0 and not player.get("started"):
+            continue
+        diff = {k: player.get(k) or 0 for k in tracked}
+        diff = {k: v for k, v in diff.items() if v}
+        diff["apps"] = 1
+        diff["starts" if player.get("started") else "bench_apps"] = 1
+        changes.append({"player_id": player["player_id"], "name": player["name"], "diff": diff})
+
+    # Most interesting first: goals, then assists, then minutes.
+    changes.sort(key=lambda c: (-c["diff"].get("goals", 0), -c["diff"].get("assists", 0),
+                                -c["diff"].get("minutes", 0)))
+    return {"is_first_run": False, "new_matches": 1, "changes": changes,
+            "from_match": {"date": (newest.get("start_time") or "")[:10],
+                           "opponent": newest.get("opponent"),
+                           "score": f"{newest.get('team_score')}-{newest.get('opponent_score')}"}}
+
+
+def build_delta(previous: dict | None, current: dict, matches: list[dict]) -> dict:
     """What changed since the last aggregate - the 'what happened in that match' panel."""
     if not previous:
-        return {"is_first_run": True, "changes": [], "new_matches": current["matches_counted"]}
+        return delta_from_last_match(matches)
 
     before = {r["player_id"]: r for r in previous.get("total", [])}
     tracked = ("goals", "assists", "minutes", "apps", "starts", "bench_apps",
@@ -290,7 +324,7 @@ def main() -> int:
     previous = read_json(season_path)
 
     current = accumulate(matches, cfg)
-    delta = build_delta(previous, current)
+    delta = build_delta(previous, current, matches)
 
     write_json(season_path, current)
     write_json(DATA / "last_delta.json", delta)
