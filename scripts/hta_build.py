@@ -10,6 +10,7 @@ never as a series colour, so it can never be mistaken for an encoded value.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from datetime import datetime, timezone
@@ -236,6 +237,7 @@ TEMPLATE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__TITLE__</title>
+<meta name="hta-build" content="__FINGERPRINT__">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700&display=swap">
 <style>
 :root {
@@ -926,6 +928,39 @@ applyOps(opsShown);
 """
 
 
+def build_fingerprint(payload: dict) -> str:
+    """A hash of what the page SAYS, deliberately not of when it was built.
+
+    The cloud routine uses this to decide whether the artifact needs republishing. A
+    naive "do the two pages differ?" check is useless here, because the header carries a
+    build timestamp that changes on every single build - it would always report a
+    difference and degrade into republishing ten near-identical versions a day.
+
+    So generated_at and last_run are excluded, and the template is included: a code or
+    layout change must move the fingerprint even when the data is untouched, which is
+    exactly the case that silently drifted before.
+    """
+    season = payload.get("season") or {}
+    schedule = payload.get("schedule") or {}
+    material = {
+        # season.generated_at moves on every aggregate run, so it is dropped; everything
+        # else in the aggregate is real content.
+        "season": {k: v for k, v in season.items() if k != "generated_at"},
+        # Only the next fixture is shown from the schedule. computed_at / next_run_* tick
+        # on their own and would make the fingerprint meaningless.
+        "next_match": schedule.get("next_match"),
+        "delta": payload.get("delta"),
+        "matches": payload.get("matches"),
+        "record": payload.get("record"),
+        "source": payload.get("source"),
+        "labels": payload.get("labels"),
+        "color_slots": payload.get("color_slots"),
+        "template": TEMPLATE,
+    }
+    blob = json.dumps(material, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+
+
 def build_html(ctx: dict, path: Path) -> None:
     lab = ctx["labels"]
     payload = {
@@ -940,6 +975,7 @@ def build_html(ctx: dict, path: Path) -> None:
         "last_run": ctx["last_run"],
     }
     replacements = {
+        "__FINGERPRINT__": build_fingerprint(payload),
         "__TITLE__": lab.get("title", "הפועל תל אביב"),
         "__SEASON__": ctx["season"].get("season", ""),
         "__UPDATED__": f"{lab.get('last_updated', 'עודכן')} {ctx['generated_at']}",

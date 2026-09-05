@@ -223,10 +223,15 @@ def delta_from_last_match(matches: list[dict]) -> dict:
                            "score": f"{newest.get('team_score')}-{newest.get('opponent_score')}"}}
 
 
-def build_delta(previous: dict | None, current: dict, matches: list[dict]) -> dict:
-    """What changed since the last aggregate - the 'what happened in that match' panel."""
+def build_delta(previous: dict | None, current: dict) -> dict:
+    """What changed since the previous run - drives the changelog and the toast.
+
+    This is run-relative, so it differs between a PC that holds prior state and a fresh
+    CI checkout that does not. It therefore must NOT feed the rendered page; see
+    delta_from_last_match for that.
+    """
     if not previous:
-        return delta_from_last_match(matches)
+        return {"is_first_run": True, "changes": [], "new_matches": current["matches_counted"]}
 
     before = {r["player_id"]: r for r in previous.get("total", [])}
     tracked = ("goals", "assists", "minutes", "apps", "starts", "bench_apps",
@@ -324,12 +329,21 @@ def main() -> int:
     previous = read_json(season_path)
 
     current = accumulate(matches, cfg)
-    delta = build_delta(previous, current, matches)
+
+    # Two different questions, deliberately kept apart:
+    #   display_delta - "what happened in the last match", derived only from the match
+    #                   records, so a PC build and a CI build render identically. This is
+    #                   what the page shows, and what the artifact/Pages fingerprint sees.
+    #   run_delta     - "what changed since the previous run", which depends on stored
+    #                   state and so differs between machines. Only drives the changelog
+    #                   and the toast, never the page.
+    display_delta = delta_from_last_match(matches)
+    run_delta = build_delta(previous, current)
 
     write_json(season_path, current)
-    write_json(DATA / "last_delta.json", delta)
-    append_changelog(delta, current)
-    write_notification(delta, matches, cfg)
+    write_json(DATA / "last_delta.json", display_delta)
+    append_changelog(run_delta, current)
+    write_notification(run_delta, matches, cfg)
 
     total_minutes = sum(r["minutes"] for r in current["total"])
     with_minutes = len([r for r in current["total"] if r["minutes"] > 0])
