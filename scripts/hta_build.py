@@ -287,6 +287,9 @@ TEMPLATE = """<!doctype html>
 }
 
 * { box-sizing: border-box; }
+/* An author `display` rule (.banner is display:flex) beats the UA default for [hidden],
+   so el.hidden alone would not hide it. */
+[hidden] { display: none !important; }
 body {
   margin: 0; padding: 0 0 48px;
   background: var(--page);
@@ -306,10 +309,12 @@ header.top {
 h1 { margin: 0; font-size: 22px; letter-spacing: -0.01em; color: var(--club-ink); }
 .sub { color: var(--text-secondary); font-size: 13px; }
 .theme-btn {
-  margin-inline-start: auto; background: transparent; color: var(--text-secondary);
+  background: transparent; color: var(--text-secondary);
   border: 1px solid var(--border); border-radius: 8px; padding: 5px 11px;
   cursor: pointer; font: inherit; font-size: 12px;
 }
+#opsBtn { margin-inline-start: auto; }
+#opsBtn[aria-pressed="true"] { color: var(--text-primary); border-color: var(--series-1); }
 
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-top: 14px; }
 .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
@@ -429,6 +434,7 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; margin-t
   <div class="title-row">
     <h1>__TITLE__</h1>
     <span class="sub">__SEASON__ · __UPDATED__</span>
+    <button class="theme-btn" id="opsBtn" type="button" aria-pressed="false">מידע תחזוקה</button>
     <button class="theme-btn" id="themeBtn" type="button">מצב תצוגה</button>
   </div>
   <div class="tiles" id="tiles"></div>
@@ -500,7 +506,7 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; margin-t
     </table></div>
   </section>
 
-  <footer class="foot">__L_SOURCE__: __SOURCE__ · __UPDATED__</footer>
+  <footer class="foot ops">__L_SOURCE__: __SOURCE__ · __UPDATED__</footer>
 </div>
 
 <dialog class="modal" id="playerModal">
@@ -535,6 +541,26 @@ const SERIES = ['--series-1','--series-2','--series-3'];
 const esc = s => String(s == null ? '' : s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
+/* ---------- maintenance detail, hidden by default ----------
+   Elements marked .ops are for whoever maintains this page, not for someone the link
+   was shared with. Hidden by default so a shared link is clean with no special URL —
+   query strings are not something to rely on surviving the artifact wrapper. Warning
+   and alert banners are deliberately NOT .ops: those are data-correctness signals that
+   every reader should see. */
+function applyOps(show) {
+  document.querySelectorAll('.ops').forEach(el => { el.hidden = !show; });
+  const btn = document.getElementById('opsBtn');
+  if (btn) btn.setAttribute('aria-pressed', show ? 'true' : 'false');
+}
+
+let opsShown = false;
+try { opsShown = localStorage.getItem('hta-ops') === '1'; } catch (e) {}
+document.getElementById('opsBtn').addEventListener('click', () => {
+  opsShown = !opsShown;
+  try { localStorage.setItem('hta-ops', opsShown ? '1' : '0'); } catch (e) {}
+  applyOps(opsShown);
+});
+
 /* ---------- header tiles ---------- */
 (function () {
   const r = DATA.record;
@@ -564,12 +590,12 @@ const esc = s => String(s == null ? '' : s)
       <strong>${esc(s.flag_he)}</strong><br>
       <span class="sub">הבדיקה הבאה: ${esc(s.next_run_local)}</span></div></div>`);
   } else if (s.next_run_local) {
-    // The heartbeat makes a stale page obvious instead of merely quiet: if the
-    // scheduled run stopped firing, this line stops advancing.
+    // Owner-only ('ops'): operational detail, hidden in the shared view. The header's
+    // "עודכן" stamp stays visible in both views, so the staleness signal is never lost.
     const lr = DATA.last_run || {};
     const ran = lr.ran_at ? ` · ריצה אחרונה: <strong>${esc(lr.ran_at)}</strong>` +
                             (lr.ok === false ? ' <span class="chip bad">נכשלה</span>' : '') : '';
-    out.push(`<div class="banner info"><span class="icon">\\u2713</span><div>
+    out.push(`<div class="banner info ops"><span class="icon">\\u2713</span><div>
       לוח המשחקים מעודכן. הבדיקה הבאה: <strong>${esc(s.next_run_local)}</strong>${ran}</div></div>`);
   }
   if (DATA.source && DATA.source !== '365scores') {
@@ -584,7 +610,8 @@ const esc = s => String(s == null ? '' : s)
   const derived = miss.filter(m => m.derived);
   const absent = miss.filter(m => !m.derived);
   if (derived.length) {
-    out.push(`<div class="banner info"><span class="icon">\\u2139\\uFE0F</span><div>
+    // Owner-only: data-provenance detail. The stats it describes are shown regardless.
+    out.push(`<div class="banner info ops"><span class="icon">\\u2139\\uFE0F</span><div>
       ${esc(L.derived_note)}<br>${chips(derived)}</div></div>`);
   }
   if (absent.length) {
@@ -871,6 +898,8 @@ try {
 renderTabs();
 renderHead();
 renderBody();
+// Must run after the banners are built, since .ops elements are created dynamically.
+applyOps(opsShown);
 </script>
 </body>
 </html>
