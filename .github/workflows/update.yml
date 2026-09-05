@@ -1,0 +1,84 @@
+name: Update dashboard
+
+# Rebuilds the Hapoel Tel Aviv dashboard and publishes it to GitHub Pages.
+#
+# This exists because sharing a Claude Artifact pins the shared view to the version that
+# was live when sharing was enabled - a shared link never picked up later updates. A Pages
+# site has a stable URL that always serves the newest deploy, so the link can be shared
+# once and keeps working.
+#
+# Runs on GitHub's infrastructure, so it is independent of both the user's PC and Claude.
+
+on:
+  schedule:
+    # Hourly through the evening, UTC. Israeli matches finish roughly 16:40-23:25 local
+    # (UTC+3 in summer, +2 in winter), so this window catches every kickoff pattern.
+    # Note: GitHub queues scheduled runs and commonly starts them 5-15 minutes late.
+    - cron: '0 13,14,15,16,17,18,19,20,21 * * *'
+  workflow_dispatch:      # lets it be run by hand from the Actions tab
+  push:
+    branches: [main]
+    paths:                # a code or config change should redeploy the page
+      - 'scripts/**'
+      - 'resources/**'
+      - 'requirements.txt'
+      - '.github/workflows/update.yml'
+
+permissions:
+  contents: write         # to commit newly ingested match records
+  pages: write            # to deploy
+  id-token: write         # required by actions/deploy-pages
+
+concurrency:
+  group: hta-dashboard
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Fetch, aggregate and build
+        run: bash scripts/run_update.sh
+
+      - name: Commit any newly ingested matches
+        run: |
+          # Match records are immutable once final and named by game id, so runs only
+          # ever add distinct files - this cannot conflict with itself.
+          git config user.name  "HTA Stats bot"
+          git config user.email "Zivgell@users.noreply.github.com"
+          git add -- data/matches
+          if git diff --cached --quiet; then
+            echo "no new match records"
+          else
+            git commit -m "data: new match record(s) [skip ci]"
+            git push
+          fi
+
+      - name: Assemble the site
+        run: |
+          mkdir -p site
+          cp output/hta_dashboard.html site/index.html
+          # A 404 that points back at the dashboard beats GitHub's default page.
+          cp output/hta_dashboard.html site/404.html
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

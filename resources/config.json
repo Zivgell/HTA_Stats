@@ -62,7 +62,7 @@
   "python_path": "C:\\Users\\user\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
   "artifact_url": "https://claude.ai/code/artifact/0951ba53-f684-4f9c-93bf-8570a51e1a77",
   "notify": true,
-  "_git_push": "The PC pushes new match records so the cloud routine only fetches genuinely new ones. The cloud never pushes back, which keeps it free of credentials.",
-  "git_push": true,
+  "_git_push": "Off: the GitHub Actions workflow now commits match records. Two writers would only cause non-fast-forward push failures here. The PC still refreshes its own local dashboard and Excel.",
+  "git_push": false,
   "git_remote": "https://github.com/Zivgell/HTA_Stats.git"
 }
