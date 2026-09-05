@@ -127,6 +127,18 @@ def collect(cfg: dict) -> dict:
             for m in matches
         ],
         "record": record,
+        # What the stats actually cover, derived from the newest match record rather
+        # than from the build clock. CI starts from a clean checkout every run, so this
+        # deliberately needs no stored state.
+        "data_through": (
+            {
+                "date": (matches[0].get("start_time") or "")[:10],
+                "opponent": matches[0].get("opponent"),
+                "score": f"{matches[0].get('team_score')}-{matches[0].get('opponent_score')}",
+            }
+            if matches
+            else None
+        ),
         "source": fetch_status.get("source", "365scores"),
         "last_run": read_json(DATA / "last_run.json", default={}) or {},
         "generated_at": datetime.now(ZoneInfo(cfg["timezone"])).strftime("%Y-%m-%d %H:%M"),
@@ -337,6 +349,8 @@ header.top {
 .title-row { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 h1 { margin: 0; font-size: 22px; letter-spacing: -0.01em; color: var(--club-ink); }
 .sub { color: var(--text-secondary); font-size: 13px; }
+/* "checked" is the liveness cue and must stay quieter than the data date beside it. */
+.checked { color: var(--muted); font-size: 12px; }
 .theme-btn {
   background: transparent; color: var(--text-secondary);
   border: 1px solid var(--border); border-radius: 8px; padding: 5px 11px;
@@ -462,7 +476,7 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; margin-t
 <header class="top"><div class="wrap">
   <div class="title-row">
     <h1>__TITLE__</h1>
-    <span class="sub" id="stamp" title="">__SEASON__ · __UPDATED__</span>
+    <span class="sub" id="stamp" title="">__SEASON__ · <span id="dataThrough"></span><span class="checked" id="checkedAt"></span></span>
     <button class="theme-btn" id="opsBtn" type="button" aria-pressed="false" hidden>מידע תחזוקה</button>
     <button class="theme-btn" id="themeBtn" type="button">מצב תצוגה</button>
   </div>
@@ -608,6 +622,18 @@ document.getElementById('stamp').addEventListener('click', () => {
     try { localStorage.setItem('hta-ops', opsShown ? '1' : '0'); } catch (e) {}
   }
 });
+
+/* ---------- header timestamps ----------
+   Two different facts, deliberately not merged: what the stats cover, and when we last
+   looked. The page rebuilds hourly, so a single build-time stamp would imply new
+   football on days when nothing was played. */
+(function () {
+  const dt = DATA.data_through;
+  document.getElementById('dataThrough').textContent = dt
+    ? `${L.data_through} ${dt.date.slice(8,10)}/${dt.date.slice(5,7)} (${dt.opponent} ${dt.score})`
+    : '';
+  document.getElementById('checkedAt').textContent = ` · ${L.checked_at} ${DATA.checked_at}`;
+})();
 
 /* ---------- header tiles ---------- */
 (function () {
@@ -972,6 +998,9 @@ def build_fingerprint(payload: dict) -> str:
         "source": payload.get("source"),
         "labels": payload.get("labels"),
         "color_slots": payload.get("color_slots"),
+        # Included on purpose: this moves only when a match is played, which is exactly
+        # when the artifact does need republishing.
+        "data_through": payload.get("data_through"),
         "template": TEMPLATE,
     }
     blob = json.dumps(material, ensure_ascii=False, sort_keys=True, default=str)
@@ -990,6 +1019,8 @@ def build_html(ctx: dict, path: Path) -> None:
         "labels": lab,
         "color_slots": ctx["color_slots"],
         "last_run": ctx["last_run"],
+        "data_through": ctx["data_through"],
+        "checked_at": ctx["generated_at"],
     }
     replacements = {
         "__FINGERPRINT__": build_fingerprint(payload),
