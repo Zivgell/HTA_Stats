@@ -24,7 +24,7 @@ BROWSER_UA = (
 
 
 def load_config() -> dict:
-    return json.loads((RESOURCES / "config.json").read_text(encoding="utf-8"))
+    return json.loads((RESOURCES / "config.json").read_text(encoding="utf-8-sig"))
 
 
 def setup_logging(name: str) -> logging.Logger:
@@ -51,7 +51,10 @@ def read_json(path: Path, default=None):
     if not path.exists():
         return default
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        # utf-8-sig, not utf-8: PowerShell's Set-Content -Encoding utf8 writes a BOM,
+        # and a leading BOM makes json.loads fail. This strips it when present and
+        # behaves identically when it is not.
+        return json.loads(path.read_text(encoding="utf-8-sig"))
     except (json.JSONDecodeError, OSError):
         return default
 
