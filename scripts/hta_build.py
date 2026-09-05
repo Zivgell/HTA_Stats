@@ -49,20 +49,37 @@ def collect(cfg: dict) -> dict:
     # The CI build deliberately skips hta_schedule.py - that exists only to drive the
     # Windows task - so there is no schedule_status.json there. Fall back to the fixture
     # list so the "next match" tile still appears on the published page.
-    if not schedule.get("next_match") and fixtures:
+    next_match = schedule.get("next_match")
+    if not next_match and fixtures:
         nxt = next((f for f in fixtures if f.get("start_time")), None)
         if nxt:
             local = datetime.fromisoformat(nxt["start_time"].replace("Z", "+00:00")).astimezone(
                 ZoneInfo(cfg["timezone"])
             )
-            schedule = dict(schedule)
-            schedule["next_match"] = {
+            next_match = {
                 "game_id": nxt.get("game_id"),
                 "competition": nxt.get("competition_name"),
                 "home": nxt.get("home"),
                 "away": nxt.get("away"),
                 "kickoff_local": local.strftime("%Y-%m-%d %H:%M"),
             }
+
+    # Normalised to exactly the fields the page renders. The scheduler emits a richer
+    # object than the fixture fallback does, and carrying that extra baggage made the
+    # PC-built page differ from the CI-built one for no visible reason - which showed up
+    # as two different fingerprints for what is really the same page.
+    schedule = dict(schedule)
+    schedule["next_match"] = (
+        {
+            "game_id": next_match.get("game_id"),
+            "competition": next_match.get("competition"),
+            "home": next_match.get("home"),
+            "away": next_match.get("away"),
+            "kickoff_local": next_match.get("kickoff_local"),
+        }
+        if next_match
+        else None
+    )
     fetch_status = read_json(DATA / "fetch_status.json", default={}) or {}
 
     matches = []
