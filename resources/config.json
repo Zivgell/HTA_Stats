@@ -1,0 +1,66 @@
+{
+  "team": {
+    "competitor_id": 567,
+    "name_he": "הפועל תל אביב",
+    "transfermarkt_club_id": 1017
+  },
+  "season": {
+    "label": "2026/27",
+    "slug": "2026_27",
+    "start_date": "2026-07-01",
+    "transfermarkt_season_id": 2026
+  },
+  "competitions": {
+    "excluded_ids": [321],
+    "names_he": {
+      "42": "ליגת העל",
+      "546": "גביע הטוטו",
+      "7685": "קונפרנס ליג",
+      "321": "משחקי ידידות"
+    },
+    "_color_slots": "Chart colour follows the competition, never its rank, so a filter or a new cup never repaints the others. 1-3 map to dataviz categorical slots 1-3.",
+    "color_slots": {
+      "42": 1,
+      "7685": 2,
+      "546": 3
+    }
+  },
+  "api365": {
+    "base_url": "https://webws.365scores.com/web",
+    "params": {
+      "appTypeId": "5",
+      "langId": "2",
+      "timezoneName": "Asia/Jerusalem",
+      "userCountryId": "6"
+    },
+    "retries": 5,
+    "backoff_seconds": 3.0,
+    "delay_between_calls": 1.5,
+    "timeout_seconds": 45
+  },
+  "stat_types": {
+    "minutes": 30,
+    "goals": 27,
+    "assists": 26,
+    "saves": 23,
+    "goals_conceded": 35,
+    "xg": 76
+  },
+  "schedule": {
+    "post_match_buffer_hours": 2,
+    "not_finished_retry_minutes": 20,
+    "not_finished_max_retries": 9,
+    "unconfirmed_check_hours": 24,
+    "no_fixtures_check_hours": 24,
+    "fetch_failed_check_hours": 6,
+    "provisional_tail_run_min": 3,
+    "confirm_window_days": 14,
+    "clean_sheet_min_minutes": 60
+  },
+  "timezone": "Asia/Jerusalem",
+  "_python_path": "Resolved explicitly because a Task Scheduler run has no interactive profile and a bare 'python' can go missing. Empty falls back to PATH lookup.",
+  "python_path": "C:\\Users\\user\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+  "artifact_url": "https://claude.ai/code/artifact/0951ba53-f684-4f9c-93bf-8570a51e1a77",
+  "notify": true,
+  "git_push": false
+}

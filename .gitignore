@@ -1,0 +1,25 @@
+# Generated outputs - rebuilt deterministically from data/matches plus the live API,
+# so committing them would only create merge noise between the PC and the cloud run.
+output/
+logs/
+
+# Derived state, regenerated every run.
+data/season_*.json
+data/fixtures.json
+data/fixture_history.json
+data/schedule_status.json
+data/fetch_status.json
+data/last_run.json
+data/last_delta.json
+data/notification.json
+data/fallback_transfermarkt.json
+data/verify_status.json
+data/changelog.md
+
+# Tracked on purpose: data/matches/*.json - the raw per-match records. They are
+# immutable once final and named by game id, so two writers only ever add distinct
+# files and never collide.
+
+__pycache__/
+*.pyc
+.venv/
