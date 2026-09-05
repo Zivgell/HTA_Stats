@@ -1,0 +1,12 @@
+# The pipeline runs on both Windows and a Linux CI runner, and both commit data files.
+# Pinning line endings keeps a re-generated file byte-identical across platforms, so a
+# run that changes nothing commits nothing.
+* text=auto eol=lf
+*.json text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.sh text eol=lf
+
+# PowerShell is only ever run on Windows, and CRLF is the safer default there.
+*.ps1 text eol=crlf

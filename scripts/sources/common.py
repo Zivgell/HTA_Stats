@@ -60,10 +60,20 @@ def read_json(path: Path, default=None):
 
 
 def write_json(path: Path, payload) -> None:
-    """Atomic write, so an interrupted run never leaves a half-written file behind."""
+    """Atomic write, so an interrupted run never leaves a half-written file behind.
+
+    newline="\\n" and the trailing newline matter: these files are committed, and the
+    pipeline runs on both Windows and a Linux CI runner. Left to the platform default,
+    Windows writes CRLF and Linux writes LF, so every alternating run rewrote whole
+    files with byte-identical content - hundreds of lines of pure churn per commit.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     tmp.replace(path)
 
 
