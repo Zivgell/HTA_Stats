@@ -75,7 +75,13 @@ jobs:
           # A 404 that points back at the dashboard beats GitHub's default page.
           cp output/hta_dashboard.html site/404.html
 
+      # enablement: true lets the action turn Pages on via the API using the pages:write
+      # permission above, instead of depending on the repo setting having been made by
+      # hand first - the first run failed for exactly that reason.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
