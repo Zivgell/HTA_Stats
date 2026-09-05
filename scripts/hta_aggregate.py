@@ -349,7 +349,7 @@ def main() -> int:
     with_minutes = len([r for r in current["total"] if r["minutes"] > 0])
     LOG.info(
         "aggregated %d matches | %d players with minutes | %d total minutes | %d changes",
-        current["matches_counted"], with_minutes, total_minutes, len(delta.get("changes", [])),
+        current["matches_counted"], with_minutes, total_minutes, len(run_delta.get("changes", [])),
     )
     return 0
 
