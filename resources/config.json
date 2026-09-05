@@ -62,5 +62,7 @@
   "python_path": "C:\\Users\\user\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
   "artifact_url": "https://claude.ai/code/artifact/0951ba53-f684-4f9c-93bf-8570a51e1a77",
   "notify": true,
-  "git_push": false
+  "_git_push": "The PC pushes new match records so the cloud routine only fetches genuinely new ones. The cloud never pushes back, which keeps it free of credentials.",
+  "git_push": true,
+  "git_remote": "https://github.com/Zivgell/HTA_Stats.git"
 }
