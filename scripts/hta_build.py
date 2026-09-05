@@ -53,18 +53,11 @@ def collect(cfg: dict) -> dict:
             matches.append(m)
     matches.sort(key=lambda m: m.get("start_time") or "", reverse=True)
 
-    # Absences are only meaningful for the most recent match. The source sometimes
-    # carries a stale expectedReturn from a previous season ("Late October 2024"),
-    # so anything older than this season is dropped rather than shown as current.
-    absences = []
-    season_year = int(cfg["season"]["start_date"][:4])
-    for entry in (matches[0].get("missing", []) if matches else []):
-        entry = dict(entry)
-        expected = entry.get("expected_return") or ""
-        years = [int(tok) for tok in expected.replace(",", " ").split() if tok.isdigit() and len(tok) == 4]
-        if years and max(years) < season_year:
-            entry["expected_return"] = None
-        absences.append(entry)
+    # The source's "missing" list is captured in each match file but is NOT surfaced.
+    # It proved untrustworthy: 8 of 10 matches reported nobody missing, return dates
+    # were years stale ("Late October 2024"), and three players it listed as injured
+    # went on to play every subsequent match. Better to show nothing than something
+    # confidently wrong.
 
     record = {"w": 0, "d": 0, "l": 0, "gf": 0, "ga": 0, "cs": 0, "matches": 0}
     for comp in season.get("competitions", []):
@@ -97,7 +90,6 @@ def collect(cfg: dict) -> dict:
             }
             for m in matches
         ],
-        "absences": absences,
         "record": record,
         "source": fetch_status.get("source", "365scores"),
         "last_run": read_json(DATA / "last_run.json", default={}) or {},
@@ -433,8 +425,8 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; margin-t
 <header class="top"><div class="wrap">
   <div class="title-row">
     <h1>__TITLE__</h1>
-    <span class="sub">__SEASON__ · __UPDATED__</span>
-    <button class="theme-btn" id="opsBtn" type="button" aria-pressed="false">מידע תחזוקה</button>
+    <span class="sub" id="stamp" title="">__SEASON__ · __UPDATED__</span>
+    <button class="theme-btn" id="opsBtn" type="button" aria-pressed="false" hidden>מידע תחזוקה</button>
     <button class="theme-btn" id="themeBtn" type="button">מצב תצוגה</button>
   </div>
   <div class="tiles" id="tiles"></div>
@@ -485,17 +477,11 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; margin-t
     </section>
   </div>
 
-  <div class="chart-grid">
-    <section class="card">
-      <h2>__L_MINCOMP__</h2>
-      <div class="legend" id="compLegend"></div>
-      <div class="bars" id="compBars"></div>
-    </section>
-    <section class="card">
-      <h2>__L_ABSENCES__</h2>
-      <ul class="plain" id="absences"></ul>
-    </section>
-  </div>
+  <section class="card">
+    <h2>__L_MINCOMP__</h2>
+    <div class="legend" id="compLegend"></div>
+    <div class="bars" id="compBars"></div>
+  </section>
 
   <section class="card">
     <h2>__L_MATCHES__</h2>
@@ -554,11 +540,36 @@ function applyOps(show) {
 }
 
 let opsShown = false;
-try { opsShown = localStorage.getItem('hta-ops') === '1'; } catch (e) {}
-document.getElementById('opsBtn').addEventListener('click', () => {
+let opsKnown = false;
+try {
+  const saved = localStorage.getItem('hta-ops');
+  opsKnown = saved !== null;
+  opsShown = saved === '1';
+} catch (e) {}
+
+const opsBtn = document.getElementById('opsBtn');
+// The button itself is hidden from anyone the link was shared with - seeing a
+// "maintenance info" control on someone else's dashboard is just confusing. It appears
+// only for a viewer who has opted in on this device before, or after the reveal gesture
+// below. Three taps on the header stamp works on a phone as well as a desktop.
+if (opsKnown) opsBtn.hidden = false;
+
+opsBtn.addEventListener('click', () => {
   opsShown = !opsShown;
   try { localStorage.setItem('hta-ops', opsShown ? '1' : '0'); } catch (e) {}
   applyOps(opsShown);
+});
+
+let taps = 0, tapTimer = null;
+document.getElementById('stamp').addEventListener('click', () => {
+  taps += 1;
+  clearTimeout(tapTimer);
+  tapTimer = setTimeout(() => { taps = 0; }, 700);
+  if (taps >= 3) {
+    taps = 0;
+    opsBtn.hidden = false;
+    try { localStorage.setItem('hta-ops', opsShown ? '1' : '0'); } catch (e) {}
+  }
 });
 
 /* ---------- header tiles ---------- */
@@ -848,15 +859,6 @@ wireChart('assistsComp', 'assisters', 'assists', 'hta-assists-comp');
     </div>`).join('');
 })();
 
-/* ---------- absences ---------- */
-(function () {
-  const list = DATA.absences || [];
-  document.getElementById('absences').innerHTML = list.length
-    ? list.map(a => `<li><strong>${esc(a.name)}</strong> — ${esc(a.reason || 'לא ידוע')}` +
-        (a.expected_return ? ` <span class="sub">(${esc(a.expected_return)})</span>` : '') + `</li>`).join('')
-    : '<li class="sub">אין היעדרויות מדווחות במשחק האחרון.</li>';
-})();
-
 /* ---------- matches ---------- */
 (function () {
   document.getElementById('matchBody').innerHTML = (DATA.matches || []).map(m => `
@@ -913,7 +915,6 @@ def build_html(ctx: dict, path: Path) -> None:
         "schedule": ctx["schedule"],
         "delta": ctx["delta"],
         "matches": ctx["matches"],
-        "absences": ctx["absences"],
         "record": ctx["record"],
         "source": ctx["source"],
         "labels": lab,
@@ -933,7 +934,6 @@ def build_html(ctx: dict, path: Path) -> None:
         "__L_SCORERS__": lab.get("top_scorers", ""),
         "__L_ASSISTS__": lab.get("top_assists", ""),
         "__L_MINCOMP__": lab.get("minutes_by_comp", ""),
-        "__L_ABSENCES__": lab.get("absences", ""),
         "__L_MATCHES__": lab.get("fixtures", ""),
         "__L_DATE__": lab.get("date", ""),
         "__L_COMP__": lab.get("competition", ""),
