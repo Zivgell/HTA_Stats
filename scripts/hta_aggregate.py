@@ -59,6 +59,11 @@ def accumulate(matches: list[dict], cfg: dict) -> dict:
     min_minutes = cfg["schedule"]["clean_sheet_min_minutes"]
     names_he = cfg["competitions"]["names_he"]
 
+    # Players who left without ever playing. Dropping them here removes them from the
+    # roster, the goalkeeper block, the cards table and the images in one place.
+    # Only safe for players with no appearances - see the note in config.json.
+    excluded = {p["player_id"] for p in cfg.get("excluded_players", [])}
+
     buckets: dict[str, dict[int, dict]] = {"total": {}}
     competitions: dict[str, dict] = {}
     timeline: dict[int, list[dict]] = {}
@@ -92,6 +97,8 @@ def accumulate(matches: list[dict], cfg: dict) -> dict:
 
         for player in match["players"]:
             pid = player["player_id"]
+            if pid in excluded:
+                continue
             played = (player.get("minutes") or 0) > 0 or player.get("started")
             clean = _is_clean_sheet(player, match, min_minutes)
 

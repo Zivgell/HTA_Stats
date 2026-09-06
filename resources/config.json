@@ -65,6 +65,11 @@
     "confirm_window_days": 14,
     "clean_sheet_min_minutes": 60
   },
+  "_excluded_players": "Squad tidying only - players who left WITHOUT having played. Both entries below were verified at 0 appearances and 0 minutes, so removing them changed no team total. Do NOT add a player who actually contributed: their goals and minutes are part of the season record and removing them would silently erase that history.",
+  "excluded_players": [
+    { "player_id": 77435268, "name": "שון בן נשר", "reason": "עזב את הקבוצה, 0 הופעות" },
+    { "player_id": 50482633, "name": "רוי ברנס", "reason": "עזב את הקבוצה, 0 הופעות" }
+  ],
   "timezone": "Asia/Jerusalem",
   "_python_path": "Resolved explicitly because a Task Scheduler run has no interactive profile and a bare 'python' can go missing. Empty falls back to PATH lookup.",
   "python_path": "C:\\Users\\user\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",

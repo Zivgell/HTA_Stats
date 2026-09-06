@@ -486,6 +486,35 @@ td.name-col { font-weight: 600; }
 
 .crest { width: 34px; height: 34px; object-fit: contain; vertical-align: middle; margin-inline-end: 4px; }
 .title-row { align-items: center; }
+
+/* Leading scorer / assister, shown above each chart. */
+.leader { display: flex; align-items: center; gap: 12px; margin-bottom: 12px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--grid); }
+.avatar.lead { width: 52px; height: 52px; font-size: 17px; margin-inline-end: 0; }
+.leader-name { font-weight: 650; font-size: 15px; }
+.leader-val { color: var(--text-secondary); font-size: 13px; }
+
+/* ---------- phones ----------
+   The table keeps every column and scrolls sideways, by choice. What changes is the
+   ergonomics: the nested vertical scroll is dropped (two scroll surfaces inside one
+   another is the worst part of the touch experience), rows get taller so a whole row is
+   an easy tap target, and padding tightens so more columns fit per screen. The sticky
+   name column and sticky header stay - they are what make sideways scrolling usable. */
+@media (max-width: 700px) {
+  .wrap { padding: 0 10px; }
+  .tbl-scroll { -webkit-overflow-scrolling: touch; }
+  .tbl-scroll.tall { max-height: none; overflow: visible; overflow-x: auto; }
+  th, td { padding: 11px 7px; }
+  td.name-col { max-width: 44vw; overflow: hidden; text-overflow: ellipsis; }
+  section.card { padding: 12px 11px; }
+  h1 { font-size: 19px; }
+  .tile .v { font-size: 19px; }
+  .avatar { width: 24px; height: 24px; margin-inline-end: 6px; }
+  .avatar.lead { width: 46px; height: 46px; }
+  .bar-row { grid-template-columns: 92px 1fr 30px; }
+  input.search { min-width: 0; width: 100%; margin-inline-start: 0; }
+  .controls { gap: 6px; }
+}
 .dim { color: var(--muted); }
 
 .minbar { position: relative; min-width: 86px; }
@@ -576,6 +605,7 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; margin-t
         <h2>__L_SCORERS__</h2>
         <select class="mini-sel" id="scorersComp" aria-label="__L_COMP__"></select>
       </div>
+      <div id="scorersLead"></div>
       <div class="bars" id="scorers"></div>
     </section>
     <section class="card">
@@ -583,6 +613,7 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; margin-t
         <h2>__L_ASSISTS__</h2>
         <select class="mini-sel" id="assistsComp" aria-label="__L_COMP__"></select>
       </div>
+      <div id="assistersLead"></div>
       <div class="bars" id="assisters"></div>
     </section>
   </div>
@@ -599,8 +630,8 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; margin-t
   <section class="card">
     <h2>__L_MATCHES__</h2>
     <div class="tbl-scroll tall"><table>
-      <thead><tr><th>__L_DATE__</th><th>__L_COMP__</th><th>__L_OPP__</th><th></th>
-        <th>__L_RESULT__</th><th>__L_CS__</th></tr></thead>
+      <thead><tr><th>__L_DATE__</th><th>__L_OPP__</th><th></th>
+        <th>__L_RESULT__</th><th>__L_COMP__</th><th>__L_CS__</th></tr></thead>
       <tbody id="matchBody"></tbody>
     </table></div>
   </section>
@@ -968,11 +999,39 @@ document.getElementById('search').addEventListener('input', e => {
 })();
 
 /* ---------- bar charts ---------- */
-function barChart(el, rows, field, colorVar) {
+function barChart(el, rows, field, colorVar, leadEl) {
   const data = rows.filter(r => (r[field] || 0) > 0)
     .sort((a, b) => b[field] - a[field]).slice(0, 8);
-  if (!data.length) { el.innerHTML = '<p class="sub">אין נתונים עדיין.</p>'; return; }
+  if (!data.length) {
+    el.innerHTML = '<p class="sub">אין נתונים עדיין.</p>';
+    if (leadEl) leadEl.innerHTML = '';
+    return;
+  }
   const max = data[0][field];
+
+  if (leadEl) {
+    // Ties are real - assists currently has three players level - and a single photo
+    // must be chosen the same way every time, on this PC and on the CI runner alike,
+    // or the build fingerprint wobbles and the artifact republishes on every run.
+    // Order: most of the stat, then fewest minutes (the better return), then name.
+    const leader = data.slice().sort((a, b) =>
+      (b[field] - a[field]) ||
+      ((a.minutes || 0) - (b.minutes || 0)) ||
+      a.name.localeCompare(b.name, 'he'))[0];
+    const tied = data.filter(r => r[field] === leader[field]).length;
+    leadEl.innerHTML = `
+      <div class="leader">
+        ${avatar(leader).replace('class="avatar"', 'class="avatar lead"')
+                        .replace('class="avatar initials"', 'class="avatar initials lead"')}
+        <div class="leader-txt">
+          <div class="leader-name">${esc(leader.name)}</div>
+          <div class="leader-val">${leader[field]} ${esc(L[field] || '')}` +
+          (tied > 1 ? ` <span class="sub">(שוויון עם ${tied - 1})</span>` : '') +
+          `</div>
+        </div>
+      </div>`;
+  }
+
   el.innerHTML = data.map(r => `
     <div class="bar-row">
       <span class="lbl">${esc(r.name)}</span>
@@ -999,7 +1058,8 @@ function wireChart(selectId, targetId, field, storageKey) {
   if (saved && opts.some(o => o.id === saved)) sel.value = saved;
 
   const draw = () => barChart(document.getElementById(targetId),
-                              rowsFor(sel.value), field, '--seq-450');
+                              rowsFor(sel.value), field, '--seq-450',
+                              document.getElementById(targetId + 'Lead'));
   sel.addEventListener('change', () => {
     try { localStorage.setItem(storageKey, sel.value); } catch (e) {}
     draw();
@@ -1064,10 +1124,13 @@ wireChart('assistsComp', 'assisters', 'assists', 'hta-assists-comp');
 
 /* ---------- matches ---------- */
 (function () {
+  // Order: date, opponent (with its home/away marker beside it), result, competition,
+  // clean sheet - what you look for first, first.
   document.getElementById('matchBody').innerHTML = (DATA.matches || []).map(m => `
-    <tr><td>${esc(m.date)}</td><td>${esc(m.competition)}</td><td>${esc(m.opponent)}</td>
+    <tr><td>${esc(m.date)}</td><td>${esc(m.opponent)}</td>
     <td class="dim">${m.is_home ? esc(L.home) : esc(L.away)}</td>
     <td class="res-${esc(m.result)}">${esc(m.team_score)}-${esc(m.opponent_score)}</td>
+    <td class="dim">${esc(m.competition)}</td>
     <td>${m.clean_sheet ? '\\u2713' : ''}</td></tr>`).join('');
 })();
 
@@ -1080,12 +1143,16 @@ function openPlayer(pid) {
   const games = DATA.season.timeline[String(pid)] || [];
   if (!row) return;
   document.getElementById('modalName').textContent = row.name;
-  const head = `<tr><th>${esc(L.date)}</th><th>${esc(L.competition)}</th><th>${esc(L.opponent)}</th>
-    <th>${esc(L.result)}</th><th></th><th>${esc(L.minutes)}</th><th>${esc(L.goals)}</th>
+  // Same leading order as the fixtures table - date, opponent, result, competition -
+  // then this player's own numbers.
+  const head = `<tr><th>${esc(L.date)}</th><th>${esc(L.opponent)}</th>
+    <th>${esc(L.result)}</th><th>${esc(L.competition)}</th><th></th>
+    <th>${esc(L.minutes)}</th><th>${esc(L.goals)}</th>
     <th>${esc(L.assists)}</th><th>${esc(L.clean_sheets)}</th><th>${esc(L.avg_rating)}</th></tr>`;
   const body = games.slice().reverse().map(g => `
-    <tr><td>${esc(g.date)}</td><td>${esc(g.competition)}</td><td>${esc(g.opponent)}</td>
+    <tr><td>${esc(g.date)}</td><td>${esc(g.opponent)}</td>
       <td class="res-${esc(g.result)}">${esc(g.score)}</td>
+      <td class="dim">${esc(g.competition)}</td>
       <td class="dim">${g.started ? 'הרכב' : 'ספסל'}</td>
       <td>${esc(g.minutes)}</td><td>${g.goals || ''}</td><td>${g.assists || ''}</td>
       <td>${g.clean_sheet ? '\\u2713' : ''}</td>
