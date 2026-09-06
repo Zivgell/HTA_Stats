@@ -274,6 +274,10 @@ class Api365:
                     "player_id": pid,
                     "name": name,
                     "jersey": info.get("jerseyNumber"),
+                    # Needed to build the headshot URL; the image path is keyed by
+                    # athleteId and versioned, not by the lineup member id above.
+                    "athlete_id": info.get("athleteId"),
+                    "image_version": info.get("imageVersion"),
                     "position": position,
                     "started": started,
                     # A named substitute who never came on has no appearance.

@@ -72,11 +72,15 @@ jobs:
           # ever add distinct files - this cannot conflict with itself.
           git config user.name  "HTA Stats bot"
           git config user.email "Zivgell@users.noreply.github.com"
-          git add -- data/matches
+          # Newly downloaded player photos are committed too. They are embedded in the
+          # page and hashed into the build fingerprint, so both this runner and the
+          # user's PC must use byte-identical files or the artifact would republish
+          # every run.
+          git add -- data/matches resources/images
           if git diff --cached --quiet; then
-            echo "no new match records"
+            echo "nothing new to commit"
           else
-            git commit -m "data: new match record(s) [skip ci]"
+            git commit -m "data: new match record(s) and/or player images [skip ci]"
             git push
           fi
 

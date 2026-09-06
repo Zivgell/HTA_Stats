@@ -14,10 +14,18 @@
     "excluded_ids": [321],
     "names_he": {
       "42": "ליגת העל",
+      "49": "גביע המדינה",
       "546": "גביע הטוטו",
       "7685": "קונפרנס ליג",
+      "6285": "אלוף האלופים",
       "321": "משחקי ידידות"
     },
+    "_card_groups": "Used ONLY by the cards table. Everywhere else each competition stays separate. Any competition id not listed here falls into the last group.",
+    "card_groups": [
+      { "key": "domestic", "label": "ליגה + גביע המדינה", "ids": [42, 49] },
+      { "key": "toto", "label": "גביע הטוטו", "ids": [546] },
+      { "key": "other", "label": "אירופה / אחר", "ids": [] }
+    ],
     "_color_slots": "Chart colour follows the competition, never its rank, so a filter or a new cup never repaints the others. 1-3 map to dataviz categorical slots 1-3.",
     "color_slots": {
       "42": 1,

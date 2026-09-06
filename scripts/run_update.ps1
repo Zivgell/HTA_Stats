@@ -94,6 +94,9 @@ $ok = Invoke-Step -Script 'scripts\hta_fetch.py' -Arguments $fetchArgs
 # 2. Aggregate and build only if there is data to work with.
 if ($ok) {
     if (Invoke-Step -Script 'scripts\hta_aggregate.py') {
+        # Optional: a new signing gets a photo automatically, but a failure here just
+        # means an initials avatar - never a reason to fail the run.
+        Invoke-Step -Script 'scripts\hta_images.py' -Optional | Out-Null
         Invoke-Step -Script 'scripts\hta_build.py' | Out-Null
     }
     # Advisory only: a Transfermarkt mismatch is logged, never fatal.

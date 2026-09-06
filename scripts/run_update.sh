@@ -28,6 +28,11 @@ if ! "$PY" scripts/hta_aggregate.py; then
     echo "FATAL: hta_aggregate.py failed"; exit 1
 fi
 
+# Optional: fetches a photo for any newly signed player. A failure here only means an
+# initials avatar, so it must never fail the run.
+echo "== images =="
+"$PY" scripts/hta_images.py || echo "note: image step skipped or partial"
+
 echo "== build =="
 if ! "$PY" scripts/hta_build.py; then
     echo "FATAL: hta_build.py failed"; exit 1

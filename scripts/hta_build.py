@@ -10,6 +10,7 @@ never as a series colour, so it can never be mistaken for an encoded value.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import sys
@@ -33,6 +34,28 @@ GOALKEEPER = "שוער"
 
 def labels() -> dict:
     return read_json(RESOURCES / "labels_he.json", default={}) or {}
+
+
+def _data_uri(path: Path) -> str | None:
+    """Inline an image. Linking is not an option - the artifact's CSP blocks external
+    images, so a linked photo would work on the public page and break on the artifact."""
+    if not path.exists():
+        return None
+    return "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+
+
+def load_images(season: dict) -> tuple[str | None, dict]:
+    images = RESOURCES / "images"
+    crest = _data_uri(images / "crest.png")
+    photos = {}
+    for row in season.get("total", []):
+        athlete = row.get("athlete_id")
+        if not athlete:
+            continue
+        uri = _data_uri(images / "players" / f"{athlete}.png")
+        if uri:
+            photos[str(athlete)] = uri
+    return crest, photos
 
 
 # --------------------------------------------------------------------------- data
@@ -145,6 +168,8 @@ def collect(cfg: dict) -> dict:
         "labels": labels(),
         "competition_names": cfg["competitions"]["names_he"],
         "color_slots": cfg["competitions"].get("color_slots", {}),
+        "card_groups": cfg["competitions"].get("card_groups", []),
+        "images": load_images(season),
     }
 
 
@@ -430,6 +455,20 @@ td.name-col { font-weight: 600; }
   font-size: 11px; color: var(--text-secondary); font-weight: 650; text-align: right; }
 .pos-row:hover td { background: color-mix(in srgb, var(--muted) 14%, var(--surface-1)); cursor: default; }
 .jersey { color: var(--muted); font-weight: 400; font-size: 11px; margin-inline-start: 5px; }
+
+.avatar {
+  width: 28px; height: 28px; border-radius: 50%; vertical-align: middle;
+  margin-inline-end: 8px; background: var(--grid); object-fit: cover;
+  border: 1px solid var(--border); flex: none;
+}
+/* Fallback when no photo is cached - initials on club red, never a broken image. */
+.avatar.initials {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--club); color: #fff; font-size: 11px; font-weight: 650;
+  letter-spacing: 0; border-color: transparent;
+}
+.crest { width: 34px; height: 34px; object-fit: contain; vertical-align: middle; margin-inline-end: 4px; }
+.title-row { align-items: center; }
 .dim { color: var(--muted); }
 
 .minbar { position: relative; min-width: 86px; }
@@ -475,6 +514,7 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; margin-t
 <body>
 <header class="top"><div class="wrap">
   <div class="title-row">
+    <span id="crestSlot"></span>
     <h1>__TITLE__</h1>
     <span class="sub" id="stamp" title="">__SEASON__ · <span id="dataThrough"></span><span class="checked" id="checkedAt"></span></span>
     <button class="theme-btn" id="opsBtn" type="button" aria-pressed="false" hidden>מידע תחזוקה</button>
@@ -487,11 +527,6 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; margin-t
   <div id="banners"></div>
 
   <section class="card">
-    <h2>__L_WHAT_CHANGED__</h2>
-    <div id="delta"></div>
-  </section>
-
-  <section class="card">
     <div class="controls">
       <div class="tabs" id="tabs" role="tablist"></div>
       <input class="search" id="search" type="search" placeholder="__L_SEARCH__" aria-label="__L_SEARCH__">
@@ -501,6 +536,11 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; margin-t
       <tbody id="tableBody"></tbody>
     </table></div>
     <p class="sub" style="margin:10px 0 0">לחיצה על שורת שחקן פותחת פירוט משחק אחר משחק.</p>
+  </section>
+
+  <section class="card">
+    <h2>__L_WHAT_CHANGED__</h2>
+    <div id="delta"></div>
   </section>
 
   <section class="card">
@@ -529,9 +569,12 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; margin-t
   </div>
 
   <section class="card">
-    <h2>__L_MINCOMP__</h2>
-    <div class="legend" id="compLegend"></div>
-    <div class="bars" id="compBars"></div>
+    <h2>__L_CARDS__</h2>
+    <div class="tbl-scroll"><table id="cardsTable">
+      <thead><tr id="cardsHead"></tr></thead>
+      <tbody id="cardsBody"></tbody>
+    </table></div>
+    <p class="sub" id="cardsNote" style="margin:10px 0 0"></p>
   </section>
 
   <section class="card">
@@ -578,6 +621,22 @@ const SERIES = ['--series-1','--series-2','--series-3'];
 const esc = s => String(s == null ? '' : s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
+/* ---------- player avatar ----------
+   Photos are embedded as data URIs, never linked: the artifact's CSP blocks external
+   images outright, so a linked photo would render on the public page and break on the
+   artifact. Anyone without a cached photo gets an initials disc instead of a broken
+   image icon, so a new signing degrades quietly. */
+function avatar(row) {
+  const src = (DATA.photos || {})[String(row.athlete_id)];
+  if (src) return `<img class="avatar" src="${src}" alt="" loading="lazy" width="28" height="28">`;
+  // The whitespace class below is double-escaped on purpose: TEMPLATE is a normal
+  // Python string (it relies on unicode escapes elsewhere, so it cannot be raw), and a
+  // single backslash here would be read as a Python escape and raise a SyntaxWarning.
+  const initials = String(row.name || '?').split(/\\s+/).slice(0, 2)
+    .map(w => w[0] || '').join('');
+  return `<span class="avatar initials" aria-hidden="true">${esc(initials)}</span>`;
+}
+
 /* ---------- maintenance detail, hidden by default ----------
    Elements marked .ops are for whoever maintains this page, not for someone the link
    was shared with. Hidden by default so a shared link is clean with no special URL —
@@ -622,6 +681,12 @@ document.getElementById('stamp').addEventListener('click', () => {
     try { localStorage.setItem('hta-ops', opsShown ? '1' : '0'); } catch (e) {}
   }
 });
+
+/* ---------- club crest ---------- */
+if (DATA.crest) {
+  document.getElementById('crestSlot').innerHTML =
+    `<img class="crest" src="${DATA.crest}" alt="" width="34" height="34">`;
+}
 
 /* ---------- header timestamps ----------
    Two different facts, deliberately not merged: what the stats cover, and when we last
@@ -794,7 +859,7 @@ function renderBody() {
       html += `<tr data-pid="${r.player_id}">` + COLS.map(c => {
         const v = r[c.f];
         if (c.name) {
-          return `<td class="name-col">${esc(v)}` +
+          return `<td class="name-col">${avatar(r)}${esc(v)}` +
             (r.jersey != null ? `<span class="jersey">${esc(r.jersey)}</span>` : '') + `</td>`;
         }
         if (c.bar) {
@@ -894,32 +959,56 @@ function wireChart(selectId, targetId, field, storageKey) {
 wireChart('scorersComp', 'scorers', 'goals', 'hta-scorers-comp');
 wireChart('assistsComp', 'assisters', 'assists', 'hta-assists-comp');
 
-/* ---------- minutes by competition (identity -> categorical slots 1-3) ---------- */
+/* ---------- cards table ----------
+   Competitions are grouped HERE ONLY: league and State Cup share a column, the Toto Cup
+   gets its own, everything else falls into the last group. Every other table on this
+   page keeps competitions separate - that split is deliberate, not an inconsistency. */
 (function () {
-  const comps = DATA.season.competitions || [];
-  // Colour follows the competition itself, from a fixed map, so sorting by minutes or
-  // a new cup appearing never repaints the others.
-  const slots = DATA.color_slots || {};
-  let nextFree = Object.keys(slots).length + 1;
-  const totals = comps.map(c => {
-    const rows = DATA.season.by_competition[String(c.id)] || [];
-    const slotNo = slots[String(c.id)] || nextFree++;
-    return { name: c.name, matches: c.matches,
-             minutes: rows.reduce((s, r) => s + (r.minutes || 0), 0),
-             slot: SERIES[(slotNo - 1) % SERIES.length] };
-  }).filter(t => t.minutes > 0).sort((a, b) => b.minutes - a.minutes);
+  const groups = DATA.card_groups || [];
+  const byComp = DATA.season.by_competition || {};
+  const known = new Set(groups.flatMap(g => (g.ids || []).map(String)));
 
-  document.getElementById('compLegend').innerHTML = totals.map(t =>
-    `<span><span class="sw" style="background:var(${t.slot})"></span>${esc(t.name)}</span>`).join('');
+  function yellowsFor(playerId, group) {
+    // The last group with no explicit ids is the catch-all for anything unlisted.
+    const ids = (group.ids && group.ids.length)
+      ? group.ids.map(String)
+      : Object.keys(byComp).filter(k => !known.has(k));
+    return ids.reduce((sum, cid) => {
+      const row = (byComp[cid] || []).find(r => r.player_id === playerId);
+      return sum + (row ? (row.yellow || 0) : 0);
+    }, 0);
+  }
 
-  const max = Math.max(1, ...totals.map(t => t.minutes));
-  document.getElementById('compBars').innerHTML = totals.map(t => `
-    <div class="bar-row">
-      <span class="lbl">${esc(t.name)}</span>
-      <span class="bar-track"><span class="bar-fill"
-        style="width:${Math.round(100 * t.minutes / max)}%;background:var(${t.slot})"></span></span>
-      <span class="val">${t.minutes}</span>
-    </div>`).join('');
+  const rows = DATA.season.total
+    .filter(r => (r.yellow || 0) + (r.second_yellow || 0) + (r.red || 0) > 0)
+    .map(r => ({
+      row: r,
+      per: groups.map(g => yellowsFor(r.player_id, g)),
+    }))
+    .sort((a, b) => (b.row.yellow - a.row.yellow)
+                 || (b.row.red - a.row.red)
+                 || (b.row.second_yellow - a.row.second_yellow));
+
+  document.getElementById('cardsHead').innerHTML =
+    `<th class="name-col">${esc(L.player)}</th>` +
+    groups.map(g => `<th>${esc(g.label)}</th>`).join('') +
+    `<th>${esc(L.total_yellow)}</th><th>${esc(L.second_yellow)}</th><th>${esc(L.red)}</th>`;
+
+  document.getElementById('cardsBody').innerHTML = rows.length
+    ? rows.map(({ row, per }) => `<tr data-pid="${row.player_id}">
+        <td class="name-col">${avatar(row)}${esc(row.name)}</td>` +
+        per.map(v => `<td class="${v ? '' : 'dim'}">${v}</td>`).join('') +
+        `<td><strong>${row.yellow}</strong></td>
+         <td class="${row.second_yellow ? '' : 'dim'}">${row.second_yellow}</td>
+         <td class="${row.red ? '' : 'dim'}">${row.red}</td></tr>`).join('')
+    : `<tr><td colspan="${groups.length + 4}" class="sub">אין כרטיסים העונה.</td></tr>`;
+
+  document.getElementById('cardsNote').textContent = rows.length
+    ? `${rows.length} ${L.cards_note}` : '';
+
+  document.querySelectorAll('#cardsBody tr[data-pid]').forEach(tr => {
+    tr.addEventListener('click', () => openPlayer(tr.dataset.pid));
+  });
 })();
 
 /* ---------- matches ---------- */
@@ -1001,6 +1090,11 @@ def build_fingerprint(payload: dict) -> str:
         # Included on purpose: this moves only when a match is played, which is exactly
         # when the artifact does need republishing.
         "data_through": payload.get("data_through"),
+        "card_groups": payload.get("card_groups"),
+        # Images are content: a new signing's photo should republish the artifact. They
+        # are byte-identical on both machines because they are committed to the repo.
+        "crest": payload.get("crest"),
+        "photos": payload.get("photos"),
         "template": TEMPLATE,
     }
     blob = json.dumps(material, ensure_ascii=False, sort_keys=True, default=str)
@@ -1021,6 +1115,9 @@ def build_html(ctx: dict, path: Path) -> None:
         "last_run": ctx["last_run"],
         "data_through": ctx["data_through"],
         "checked_at": ctx["generated_at"],
+        "card_groups": ctx["card_groups"],
+        "crest": ctx["images"][0],
+        "photos": ctx["images"][1],
     }
     replacements = {
         "__FINGERPRINT__": build_fingerprint(payload),
@@ -1035,7 +1132,7 @@ def build_html(ctx: dict, path: Path) -> None:
         "__L_GK__": lab.get("goalkeepers", ""),
         "__L_SCORERS__": lab.get("top_scorers", ""),
         "__L_ASSISTS__": lab.get("top_assists", ""),
-        "__L_MINCOMP__": lab.get("minutes_by_comp", ""),
+        "__L_CARDS__": lab.get("cards_table", ""),
         "__L_MATCHES__": lab.get("fixtures", ""),
         "__L_DATE__": lab.get("date", ""),
         "__L_COMP__": lab.get("competition", ""),

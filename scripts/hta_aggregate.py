@@ -30,6 +30,10 @@ def _blank(player: dict) -> dict:
         "player_id": player["player_id"],
         "name": player["name"],
         "jersey": player.get("jersey"),
+        # Carried through so hta_images.py can build the headshot URL and the page can
+        # look the cached file up by athlete id.
+        "athlete_id": player.get("athlete_id"),
+        "image_version": player.get("image_version"),
         "position": player.get("position"),
         "xg": 0.0,
         "_rating_sum": 0.0,
@@ -96,6 +100,10 @@ def accumulate(matches: list[dict], cfg: dict) -> dict:
                 row["name"] = player["name"]
                 if player.get("jersey") is not None:
                     row["jersey"] = player["jersey"]
+                if player.get("athlete_id"):
+                    row["athlete_id"] = player["athlete_id"]
+                if player.get("image_version"):
+                    row["image_version"] = player["image_version"]
                 if player.get("position"):
                     row["position"] = player["position"]
 
