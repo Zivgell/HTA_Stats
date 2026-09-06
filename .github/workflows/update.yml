@@ -13,8 +13,20 @@ on:
   schedule:
     # Hourly through the evening, UTC. Israeli matches finish roughly 16:40-23:25 local
     # (UTC+3 in summer, +2 in winter), so this window catches every kickoff pattern.
-    # Note: GitHub queues scheduled runs and commonly starts them 5-15 minutes late.
-    - cron: '0 13,14,15,16,17,18,19,20,21 * * *'
+    # Plus 06:07 UTC (~09:07 Israel) as a catch-up, because nothing runs for the ~15 hours
+    # between the last evening slot and the first afternoon one.
+    #
+    # Minute :07, NOT :00 - this is measured, not superstition. At minute 0 the observed
+    # behaviour on 2026-09-05 was a median 57-minute delay AND half the slots dropped
+    # outright (17:00 ran 17:54, 18:00 never ran, 19:00 ran 19:57, 20:00 never ran,
+    # 21:00 ran 21:58). GitHub documents the cause: "The schedule event can be delayed
+    # during periods of high loads... High load times include the start of every hour...
+    # some queued jobs may be dropped. To decrease the chance of delay, schedule your
+    # workflow to run at a different time of the hour."
+    #
+    # :07 also suits the fixtures: Israeli kick-offs cluster at 20:00, so whistles cluster
+    # around :55, which a :07 slot picks up about 12 minutes later.
+    - cron: '7 6,13,14,15,16,17,18,19,20,21 * * *'
   workflow_dispatch:      # lets it be run by hand from the Actions tab
   push:
     branches: [main]
