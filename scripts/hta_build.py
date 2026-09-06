@@ -467,6 +467,23 @@ td.name-col { font-weight: 600; }
   background: var(--club); color: #fff; font-size: 11px; font-weight: 650;
   letter-spacing: 0; border-color: transparent;
 }
+/* Native <details> so the disclosure is keyboard- and screen-reader-correct for free.
+   The default marker is suppressed because in RTL the browser puts it on the wrong
+   side; the chevron span below takes its place and rotates on open. */
+#deltaDetails > summary {
+  list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px;
+  font-size: 15px; font-weight: 650; color: var(--text-primary);
+}
+#deltaDetails > summary::-webkit-details-marker { display: none; }
+#deltaDetails > summary:focus-visible { outline: 2px solid var(--series-1); outline-offset: 3px; border-radius: 6px; }
+#deltaDetails .chev { color: var(--muted); font-size: 12px; transition: transform .15s ease; }
+@media (prefers-reduced-motion: reduce) { #deltaDetails .chev { transition: none; } }
+/* RTL: the chevron points left when closed, down when open. */
+#deltaDetails .chev { transform: scaleX(-1); }
+#deltaDetails[open] .chev { transform: rotate(90deg); }
+#deltaDetails > summary .tally { font-weight: 400; font-size: 13px; color: var(--text-secondary); }
+#deltaDetails > #delta { margin-top: 10px; }
+
 .crest { width: 34px; height: 34px; object-fit: contain; vertical-align: middle; margin-inline-end: 4px; }
 .title-row { align-items: center; }
 .dim { color: var(--muted); }
@@ -538,9 +555,11 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; margin-t
     <p class="sub" style="margin:10px 0 0">לחיצה על שורת שחקן פותחת פירוט משחק אחר משחק.</p>
   </section>
 
-  <section class="card">
-    <h2>__L_WHAT_CHANGED__</h2>
-    <div id="delta"></div>
+  <section class="card" id="deltaCard">
+    <details id="deltaDetails">
+      <summary><span class="chev" aria-hidden="true">▸</span><span id="deltaSummary"></span></summary>
+      <div id="delta"></div>
+    </details>
   </section>
 
   <section class="card">
@@ -760,18 +779,45 @@ if (DATA.crest) {
   document.getElementById('banners').innerHTML = out.join('');
 })();
 
-/* ---------- what changed ---------- */
+/* ---------- what changed ----------
+   Collapsed by default. The panel lists every player who appeared in the last match, so
+   it is long; folding it keeps the roster above it dominant while losing nothing. The
+   summary line is written to answer "what happened" without expanding. */
 (function () {
   const d = DATA.delta || {};
   const el = document.getElementById('delta');
+  const details = document.getElementById('deltaDetails');
+  const summary = document.getElementById('deltaSummary');
+
+  // Nothing to disclose: render a plain line instead of an expander with nothing behind
+  // it, which would be worse than a sentence.
+  function flatten(text) {
+    details.replaceWith(Object.assign(document.createElement('div'), {
+      innerHTML: `<h2>${esc(L.what_changed)}</h2><p class="sub">${esc(text)}</p>`,
+    }));
+  }
+
   if (d.is_first_run) {
-    el.innerHTML = `<p class="sub">טעינה ראשונית — ${esc(DATA.season.matches_counted)} משחקים נטענו.</p>`;
+    flatten(`טעינה ראשונית — ${DATA.season.matches_counted} משחקים נטענו.`);
     return;
   }
   if (!d.changes || !d.changes.length) {
-    el.innerHTML = `<p class="sub">${esc(L.no_changes)}</p>`;
+    flatten(L.no_changes);
     return;
   }
+
+  const sum = k => d.changes.reduce((t, c) => t + (c.diff[k] || 0), 0);
+  const bits = [];
+  const m = d.from_match;
+  if (m) bits.push(`${m.score} ${m.opponent}`);
+  if (sum('goals')) bits.push(`${sum('goals')} ${L.goals}`);
+  if (sum('assists')) bits.push(`${sum('assists')} ${L.assists}`);
+  const cards = sum('yellow') + sum('second_yellow') + sum('red');
+  if (cards) bits.push(`${cards} ${L.cards_table}`);
+  bits.push(`${d.changes.length} ${L.players_played}`);
+
+  summary.innerHTML = `${esc(L.what_changed)} <span class="tally">· ${esc(bits.join(' · '))}</span>`;
+
   el.innerHTML = '<ul class="plain">' + d.changes.map(c => {
     const parts = Object.entries(c.diff).map(([k, v]) => {
       const cls = (k === 'yellow' || k === 'red' || k === 'second_yellow') ? 'bad' : 'good';
@@ -779,6 +825,11 @@ if (DATA.crest) {
     }).join('');
     return `<li><strong>${esc(c.name)}</strong> ${parts}</li>`;
   }).join('') + '</ul>';
+
+  try { details.open = localStorage.getItem('hta-delta-open') === '1'; } catch (e) {}
+  details.addEventListener('toggle', () => {
+    try { localStorage.setItem('hta-delta-open', details.open ? '1' : '0'); } catch (e) {}
+  });
 })();
 
 /* ---------- main table ---------- */
