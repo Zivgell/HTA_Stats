@@ -50,6 +50,32 @@ def relevant(game: dict, cfg: dict) -> bool:
     return bool(start and season_start and start >= season_start)
 
 
+PRESERVE_ON_REFETCH = ("rating", "xg")
+
+
+def merge_preserving(fresh: dict, cached: dict | None) -> dict:
+    """Let a re-fetch add or correct data, but never erase it.
+
+    365scores drops player ratings for older matches - querying the July fixture returns
+    no ranking field at all, while September still has all of them. Because a re-fetch
+    overwrites the cached record wholesale, running --force after a rating expired would
+    silently strip a value we had captured while it was still published, and it is not
+    recoverable from anywhere.
+    """
+    if not cached:
+        return fresh
+
+    previous = {p.get("player_id"): p for p in cached.get("players") or []}
+    for player in fresh.get("players") or []:
+        old = previous.get(player.get("player_id"))
+        if not old:
+            continue
+        for field in PRESERVE_ON_REFETCH:
+            if player.get(field) in (None, 0, 0.0) and old.get(field):
+                player[field] = old[field]
+    return fresh
+
+
 def ingest_matches(api: Api365, cfg: dict, *, force: bool = False) -> dict:
     """Fetch every finished match we do not already hold. Returns a run summary."""
     MATCHES.mkdir(parents=True, exist_ok=True)
@@ -79,7 +105,10 @@ def ingest_matches(api: Api365, cfg: dict, *, force: bool = False) -> dict:
         if gid in cached and gid not in incomplete and not force:
             continue
         try:
-            record = api.parse_game(api.game(int(gid)))
+            record = merge_preserving(
+                api.parse_game(api.game(int(gid))),
+                read_json(MATCHES / f"{gid}.json"),
+            )
         except Exception as exc:  # noqa: BLE001
             # One bad match - throttling, or a malformed payload - must not sink the
             # whole run. It stays uncached and is retried on the next run.

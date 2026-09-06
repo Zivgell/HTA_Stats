@@ -112,6 +112,23 @@ def collect(cfg: dict) -> dict:
             matches.append(m)
     matches.sort(key=lambda m: m.get("start_time") or "", reverse=True)
 
+    # Slimmed events per match for the click-through detail: goals and cards only, names
+    # not ids, so the panel needs no extra lookups. ~2.4 KB for 10 matches.
+    match_events = {
+        str(m["game_id"]): [
+            {
+                "min": e.get("minute"),
+                "type": e.get("type_id"),
+                "player": e.get("player"),
+                "assist": e.get("extra_player"),
+                "shootout": bool(e.get("shootout")),
+            }
+            for e in (m.get("events") or [])
+            if e.get("type_id") in (1, 2, 3)
+        ]
+        for m in matches
+    }
+
     # The source's "missing" list is captured in each match file but is NOT surfaced.
     # It proved untrustworthy: 8 of 10 matches reported nobody missing, return dates
     # were years stale ("Late October 2024"), and three players it listed as injured
@@ -170,6 +187,7 @@ def collect(cfg: dict) -> dict:
         "color_slots": cfg["competitions"].get("color_slots", {}),
         "card_groups": cfg["competitions"].get("card_groups", []),
         "images": load_images(season),
+        "match_events": match_events,
     }
 
 
@@ -185,7 +203,8 @@ SHEET_COLUMNS = [
     ("assists", "assists"), ("goal_involvements", "goal_involvements"),
     ("clean_sheets", "clean_sheets"), ("yellow", "yellow"),
     ("second_yellow", "second_yellow"), ("red", "red"),
-    ("avg_rating", "avg_rating"), ("minutes_per_goal", "minutes_per_goal"),
+    # avg_rating deliberately omitted - see the note in the roster COLS definition.
+    ("minutes_per_goal", "minutes_per_goal"),
 ]
 
 
@@ -240,16 +259,15 @@ def build_excel(ctx: dict, path: Path) -> None:
         ws = wb.create_sheet(lab.get("goalkeepers", "שוערים")[:31])
         ws.append([lab.get(k, k) for k in
                    ["player", "apps", "starts", "minutes", "clean_sheets",
-                    "goals_conceded", "saves", "save_pct", "avg_rating"]])
+                    "goals_conceded", "saves", "save_pct"]])
         for row in gk_rows:
             faced = (row["saves"] or 0) + (row["goals_conceded"] or 0)
             ws.append([
                 row["name"], row["apps"], row["starts"], row["minutes"],
                 row["clean_sheets"], row["goals_conceded"], row["saves"],
                 round(100 * row["saves"] / faced, 1) if faced else None,
-                row["avg_rating"],
             ])
-        _style_sheet(ws, 9, len(gk_rows) + 1, widths={1: 22})
+        _style_sheet(ws, 8, len(gk_rows) + 1, widths={1: 22})
 
     # Fixtures and results.
     ws = wb.create_sheet(lab.get("fixtures", "משחקים")[:31])
@@ -493,6 +511,16 @@ td.name-col { font-weight: 600; }
 .avatar.lead { width: 52px; height: 52px; font-size: 17px; margin-inline-end: 0; }
 .leader-name { font-weight: 650; font-size: 15px; }
 .leader-val { color: var(--text-secondary); font-size: 13px; }
+
+/* Match detail panel */
+.modal-body h4 { margin: 16px 0 6px; font-size: 13px; color: var(--muted); font-weight: 650; }
+.modal-body h4:first-of-type { margin-top: 10px; }
+ul.evt li { display: flex; align-items: center; gap: 8px; }
+ul.evt .min { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 30px; }
+.card-y, .card-r { display: inline-block; width: 9px; height: 12px; border-radius: 2px; flex: none; }
+.card-y { background: var(--warning); }
+.card-r { background: var(--critical); }
+#matchBody tr { cursor: pointer; }
 
 /* ---------- phones ----------
    The table keeps every column and scrolls sideways, by choice. What changes is the
@@ -876,7 +904,10 @@ const COLS = [
   { f: 'yellow', l: L.yellow },
   { f: 'second_yellow', l: L.second_yellow },
   { f: 'red', l: L.red },
-  { f: 'avg_rating', l: L.avg_rating },
+  // No avg_rating column: it averages only over matches that carry a rating, and says
+  // nothing about how many that is - one player showed the squad's highest average off a
+  // single 26-minute appearance. Per-match ratings are sound and are still used, in the
+  // player modal and for man of the match.
   { f: 'minutes_per_goal', l: L.minutes_per_goal },
 ];
 
@@ -983,7 +1014,7 @@ document.getElementById('search').addEventListener('input', e => {
 
 /* ---------- goalkeepers ---------- */
 (function () {
-  const keys = ['player','apps','starts','minutes','clean_sheets','goals_conceded','saves','save_pct','avg_rating'];
+  const keys = ['player','apps','starts','minutes','clean_sheets','goals_conceded','saves','save_pct'];
   document.getElementById('gkHead').innerHTML =
     keys.map((k, i) => `<th class="${i === 0 ? 'name-col' : ''}">${esc(L[k] || k)}</th>`).join('');
   // Only keepers who actually played - the rest would be a wall of zeroes.
@@ -993,8 +1024,7 @@ document.getElementById('search').addEventListener('input', e => {
     const pct = faced ? Math.round(1000 * r.saves / faced) / 10 : null;
     return `<tr><td class="name-col">${esc(r.name)}</td><td>${r.apps}</td><td>${r.starts}</td>
       <td>${r.minutes}</td><td>${r.clean_sheets}</td><td>${r.goals_conceded}</td>
-      <td>${r.saves}</td><td>${pct == null ? '–' : pct + '%'}</td>
-      <td>${r.avg_rating == null ? '–' : r.avg_rating}</td></tr>`;
+      <td>${r.saves}</td><td>${pct == null ? '–' : pct + '%'}</td></tr>`;
   }).join('');
 })();
 
@@ -1090,49 +1120,141 @@ wireChart('assistsComp', 'assisters', 'assists', 'hta-assists-comp');
     }, 0);
   }
 
-  const rows = DATA.season.total
+  const base = DATA.season.total
     .filter(r => (r.yellow || 0) + (r.second_yellow || 0) + (r.red || 0) > 0)
-    .map(r => ({
-      row: r,
-      per: groups.map(g => yellowsFor(r.player_id, g)),
-    }))
-    .sort((a, b) => (b.row.yellow - a.row.yellow)
-                 || (b.row.red - a.row.red)
-                 || (b.row.second_yellow - a.row.second_yellow));
+    .map(r => ({ row: r, per: groups.map(g => yellowsFor(r.player_id, g)) }));
 
-  document.getElementById('cardsHead').innerHTML =
-    `<th class="name-col">${esc(L.player)}</th>` +
-    groups.map(g => `<th>${esc(g.label)}</th>`).join('') +
-    `<th>${esc(L.total_yellow)}</th><th>${esc(L.second_yellow)}</th><th>${esc(L.red)}</th>`;
+  // Same click-to-sort behaviour as the roster table, so there is one mechanism to learn.
+  // Columns: 0 = name, 1..n = groups, then total / second yellow / red.
+  let cSort = groups.length + 1;   // total yellows
+  let cDir = -1;
 
-  document.getElementById('cardsBody').innerHTML = rows.length
-    ? rows.map(({ row, per }) => `<tr data-pid="${row.player_id}">
-        <td class="name-col">${avatar(row)}${esc(row.name)}</td>` +
-        per.map(v => `<td class="${v ? '' : 'dim'}">${v}</td>`).join('') +
-        `<td><strong>${row.yellow}</strong></td>
-         <td class="${row.second_yellow ? '' : 'dim'}">${row.second_yellow}</td>
-         <td class="${row.red ? '' : 'dim'}">${row.red}</td></tr>`).join('')
-    : `<tr><td colspan="${groups.length + 4}" class="sub">אין כרטיסים העונה.</td></tr>`;
+  const value = (item, i) => {
+    if (i === 0) return item.row.name;
+    if (i <= groups.length) return item.per[i - 1];
+    return [item.row.yellow, item.row.second_yellow, item.row.red][i - groups.length - 1];
+  };
 
-  document.getElementById('cardsNote').textContent = rows.length
-    ? `${rows.length} ${L.cards_note}` : '';
+  const headers = [L.player, ...groups.map(g => g.label),
+                   L.total_yellow, L.second_yellow, L.red];
 
-  document.querySelectorAll('#cardsBody tr[data-pid]').forEach(tr => {
-    tr.addEventListener('click', () => openPlayer(tr.dataset.pid));
-  });
+  function renderCards() {
+    document.getElementById('cardsHead').innerHTML = headers.map((h, i) => {
+      const arrow = cSort === i ? (cDir === -1 ? ' \\u25BC' : ' \\u25B2') : '';
+      return `<th data-i="${i}" class="${i === 0 ? 'name-col' : ''}">${esc(h)}${arrow}</th>`;
+    }).join('');
+
+    const rows = base.slice().sort((a, b) => {
+      const x = value(a, cSort), y = value(b, cSort);
+      if (typeof x === 'string') return x.localeCompare(y, 'he') * cDir;
+      // Ties fall back to total yellows so the order never looks arbitrary.
+      return ((x - y) || (a.row.yellow - b.row.yellow)) * cDir;
+    });
+
+    document.getElementById('cardsBody').innerHTML = rows.length
+      ? rows.map(({ row, per }) => `<tr data-pid="${row.player_id}">
+          <td class="name-col">${avatar(row)}${esc(row.name)}</td>` +
+          per.map(v => `<td class="${v ? '' : 'dim'}">${v}</td>`).join('') +
+          `<td><strong>${row.yellow}</strong></td>
+           <td class="${row.second_yellow ? '' : 'dim'}">${row.second_yellow}</td>
+           <td class="${row.red ? '' : 'dim'}">${row.red}</td></tr>`).join('')
+      : `<tr><td colspan="${headers.length}" class="sub">אין כרטיסים העונה.</td></tr>`;
+
+    document.querySelectorAll('#cardsHead th').forEach(th => {
+      th.addEventListener('click', () => {
+        const i = Number(th.dataset.i);
+        if (cSort === i) cDir = -cDir; else { cSort = i; cDir = i === 0 ? 1 : -1; }
+        renderCards();
+      });
+    });
+    document.querySelectorAll('#cardsBody tr[data-pid]').forEach(tr => {
+      tr.addEventListener('click', () => openPlayer(tr.dataset.pid));
+    });
+  }
+
+  renderCards();
+  document.getElementById('cardsNote').textContent = base.length
+    ? `${base.length} ${L.cards_note}` : '';
 })();
 
 /* ---------- matches ---------- */
 (function () {
   // Order: date, opponent (with its home/away marker beside it), result, competition,
-  // clean sheet - what you look for first, first.
+  // clean sheet - what you look for first, first. Each row opens that match's detail.
   document.getElementById('matchBody').innerHTML = (DATA.matches || []).map(m => `
-    <tr><td>${esc(m.date)}</td><td>${esc(m.opponent)}</td>
+    <tr data-gid="${m.game_id}"><td>${esc(m.date)}</td><td>${esc(m.opponent)}</td>
     <td class="dim">${m.is_home ? esc(L.home) : esc(L.away)}</td>
     <td class="res-${esc(m.result)}">${esc(m.team_score)}-${esc(m.opponent_score)}</td>
     <td class="dim">${esc(m.competition)}</td>
     <td>${m.clean_sheet ? '\\u2713' : ''}</td></tr>`).join('');
+
+  document.querySelectorAll('#matchBody tr[data-gid]').forEach(tr => {
+    tr.addEventListener('click', () => openMatch(tr.dataset.gid));
+  });
 })();
+
+/* ---------- match detail ----------
+   Reuses the same dialog as the player view with a different renderer. Goals and cards
+   come from the slimmed event list; man of the match is the top per-match rating, which
+   involves no averaging and so is sound - unlike the season average, which was removed. */
+function openMatch(gid) {
+  const m = (DATA.matches || []).find(x => String(x.game_id) === String(gid));
+  const events = (DATA.match_events || {})[String(gid)] || [];
+  if (!m) return;
+
+  // Shootout conversions are NOT goals. Listing them together would have shown the July
+  // cup tie as 5-x instead of 2-2.
+  const goals = events.filter(e => e.type === 1 && !e.shootout);
+  const pens = events.filter(e => e.type === 1 && e.shootout);
+  const cards = events.filter(e => e.type === 2 || e.type === 3);
+
+  // Every player's entry for this match, from the timeline already in the payload.
+  const appearances = [];
+  Object.entries(DATA.season.timeline || {}).forEach(([pid, games]) => {
+    const g = games.find(x => String(x.game_id) === String(gid));
+    if (g) appearances.push({ pid, game: g });
+  });
+  const rated = appearances.filter(a => a.game.rating);
+  const motm = rated.length
+    ? rated.reduce((best, a) => (a.game.rating > best.game.rating ? a : best))
+    : null;
+  const motmRow = motm && DATA.season.total.find(r => String(r.player_id) === String(motm.pid));
+
+  const line = (e, icon) => `<li>${icon}<span class="min">${esc(e.min)}'</span>
+      <strong>${esc(e.player)}</strong>` +
+      (e.assist ? ` <span class="sub">(${esc(L.assist_by)}: ${esc(e.assist)})</span>` : '') +
+      `</li>`;
+
+  document.getElementById('modalName').textContent =
+    `${m.is_home ? DATA.labels.title.split('—')[0].trim() : m.opponent} ${m.team_score}-${m.opponent_score} ` +
+    `${m.is_home ? m.opponent : DATA.labels.title.split('—')[0].trim()}`;
+
+  let html = `<p class="sub">${esc(m.date)} · ${esc(m.competition)} · ${m.is_home ? esc(L.home) : esc(L.away)}</p>`;
+
+  html += `<h4>${esc(L.match_goals)}</h4>` + (goals.length
+    ? `<ul class="plain evt">${goals.map(g => line(g, '\\u26BD ')).join('')}</ul>`
+    : `<p class="sub">אין שערים של הפועל במשחק זה.</p>`);
+
+  if (pens.length) {
+    html += `<h4>${esc(L.penalties)}</h4><ul class="plain evt">` +
+      pens.map(p => `<li>\\u26BD <strong>${esc(p.player)}</strong></li>`).join('') + `</ul>`;
+  }
+
+  html += `<h4>${esc(L.match_cards)}</h4>` + (cards.length
+    ? `<ul class="plain evt">${cards.map(c =>
+        line(c, c.type === 3 ? '<span class="card-r"></span>' : '<span class="card-y"></span>')).join('')}</ul>`
+    : `<p class="sub">אין כרטיסים במשחק זה.</p>`);
+
+  html += `<h4>${esc(L.motm)}</h4>` + (motm && motmRow
+    ? `<div class="leader">${avatar(motmRow).replace('class="avatar"', 'class="avatar lead"')
+                                            .replace('class="avatar initials"', 'class="avatar initials lead"')}
+         <div class="leader-txt"><div class="leader-name">${esc(motmRow.name)}</div>
+         <div class="leader-val">${esc(motm.game.rating)}</div></div></div>`
+    : `<p class="sub">${esc(L.motm_unavailable)}</p>`);
+
+  document.getElementById('modalBody').innerHTML = html;
+  modal.showModal();
+}
 
 /* ---------- player timeline modal ---------- */
 const modal = document.getElementById('playerModal');
@@ -1148,7 +1270,7 @@ function openPlayer(pid) {
   const head = `<tr><th>${esc(L.date)}</th><th>${esc(L.opponent)}</th>
     <th>${esc(L.result)}</th><th>${esc(L.competition)}</th><th></th>
     <th>${esc(L.minutes)}</th><th>${esc(L.goals)}</th>
-    <th>${esc(L.assists)}</th><th>${esc(L.clean_sheets)}</th><th>${esc(L.avg_rating)}</th></tr>`;
+    <th>${esc(L.assists)}</th><th>${esc(L.clean_sheets)}</th><th>${esc(L.rating)}</th></tr>`;
   const body = games.slice().reverse().map(g => `
     <tr><td>${esc(g.date)}</td><td>${esc(g.opponent)}</td>
       <td class="res-${esc(g.result)}">${esc(g.score)}</td>
@@ -1213,6 +1335,7 @@ def build_fingerprint(payload: dict) -> str:
         # are byte-identical on both machines because they are committed to the repo.
         "crest": payload.get("crest"),
         "photos": payload.get("photos"),
+        "match_events": payload.get("match_events"),
         "template": TEMPLATE,
     }
     blob = json.dumps(material, ensure_ascii=False, sort_keys=True, default=str)
@@ -1236,6 +1359,7 @@ def build_html(ctx: dict, path: Path) -> None:
         "card_groups": ctx["card_groups"],
         "crest": ctx["images"][0],
         "photos": ctx["images"][1],
+        "match_events": ctx["match_events"],
     }
     replacements = {
         "__FINGERPRINT__": build_fingerprint(payload),
