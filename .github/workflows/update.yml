@@ -31,8 +31,6 @@ on:
     # minute, so this is not a fix - it just gives the backstop more chances. The
     # reliable trigger is a push from the cloud routine, which fires every time.
     - cron: '37 13,14,15,16,17,18,19,20,21 * * *'
-    # One-off demonstration slot, 12:45 Israel.
-    - cron: '45 9 7 9 *'
   workflow_dispatch:      # lets it be run by hand from the Actions tab
   push:
     branches: [main]
