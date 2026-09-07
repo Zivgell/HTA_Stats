@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -76,6 +76,39 @@ def merge_preserving(fresh: dict, cached: dict | None) -> dict:
     return fresh
 
 
+# Roughly 20 scheduled runs. Long enough to survive a quiet night or a source outage,
+# short enough that a match whose ratings are never coming stops costing a request.
+RATING_RETRY_HOURS = 48
+
+
+def has_ratings(record: dict) -> bool:
+    """Does this record carry a usable set of ratings, not just the first few?
+
+    Deliberately not `any()`. Man of the match is the highest rating in the match, so a
+    half-published set can crown the wrong player and then be frozen in place by the very
+    caching this check guards. Requiring a majority of the players who actually took the
+    field costs at most a few extra requests inside the retry window and cannot pick a
+    winner from a partial field. Unrated cameos are normal and expected, which is why this
+    is a majority and not "all".
+    """
+    played = [p for p in record.get("players") or [] if (p.get("minutes") or 0) > 0]
+    if not played:
+        return False
+    rated = [p for p in played if (p.get("rating") or 0) > 0]
+    return len(rated) * 2 >= len(played)
+
+
+def within_retry_window(record: dict, now: datetime) -> bool:
+    """Is this match still young enough to be worth asking about again?
+
+    A record with no usable kickoff time is treated as too old. Retrying is the
+    unbounded option, and a malformed file must not buy itself a request on every run
+    from now until forever.
+    """
+    start = _parse_time(record.get("start_time"))
+    return bool(start and now - start < timedelta(hours=RATING_RETRY_HOURS))
+
+
 def ingest_matches(api: Api365, cfg: dict, *, force: bool = False) -> dict:
     """Fetch every finished match we do not already hold. Returns a run summary."""
     MATCHES.mkdir(parents=True, exist_ok=True)
@@ -86,15 +119,35 @@ def ingest_matches(api: Api365, cfg: dict, *, force: bool = False) -> dict:
 
     # A match is only "done" once it is final AND carries real player stats. Matches
     # cached without stats stay eligible for re-fetching in case they fill in later.
-    cached, incomplete = set(), set()
+    #
+    # Ratings need the same treatment, for a subtler reason. 365scores marks a match final
+    # and publishes minutes at the whistle, but computes player ratings some minutes after.
+    # A run landing in that gap would cache a "complete" record with no ratings and never
+    # look again, losing man of the match for that game permanently - and the routine now
+    # fires about two minutes after full time, squarely inside the gap.
+    #
+    # Both retries are bounded by match age, because neither absence is always temporary:
+    # the July cup tie has never carried stats, and ratings for the July league games have
+    # since expired upstream. Unbounded, those would each cost a request on every run for
+    # the rest of the season.
+    now = datetime.now(timezone.utc)
+    cached, incomplete, awaiting_ratings = set(), set(), set()
     for path in MATCHES.glob("*.json"):
         cached.add(path.stem)
         record = read_json(path) or {}
+        if not within_retry_window(record, now):
+            continue
         if not record.get("stats_complete", True):
             incomplete.add(path.stem)
+        elif not has_ratings(record):
+            awaiting_ratings.add(path.stem)
     if incomplete:
         LOG.info("%d cached match(es) still missing player stats, will retry: %s",
                  len(incomplete), ", ".join(sorted(incomplete)))
+    if awaiting_ratings:
+        LOG.info("%d cached match(es) still missing player ratings, will retry: %s",
+                 len(awaiting_ratings), ", ".join(sorted(awaiting_ratings)))
+    retry = incomplete | awaiting_ratings
 
     # A match re-pulled because it was missing stats is NOT news - counting it as new
     # would fire the notification on every single run, forever.
@@ -102,7 +155,7 @@ def ingest_matches(api: Api365, cfg: dict, *, force: bool = False) -> dict:
 
     for game in finished:
         gid = str(game.get("id"))
-        if gid in cached and gid not in incomplete and not force:
+        if gid in cached and gid not in retry and not force:
             continue
         try:
             record = merge_preserving(
@@ -132,6 +185,12 @@ def ingest_matches(api: Api365, cfg: dict, *, force: bool = False) -> dict:
         "already_cached": len(cached),
         "newly_ingested": new_ids,
         "refreshed_incomplete": refreshed_ids,
+        # Matches still waiting on ratings AFTER this run - i.e. ones that will be asked
+        # about again. A match topped up successfully this run drops out of the set.
+        "awaiting_ratings": sorted(
+            gid for gid in awaiting_ratings
+            if not has_ratings(read_json(MATCHES / f"{gid}.json") or {})
+        ),
         "failed": failed,
     }
 

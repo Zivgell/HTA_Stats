@@ -16,9 +16,12 @@ data/fallback_transfermarkt.json
 data/verify_status.json
 data/changelog.md
 
-# Tracked on purpose: data/matches/*.json - the raw per-match records. They are
-# immutable once final and named by game id, so two writers only ever add distinct
-# files and never collide.
+# Tracked on purpose: data/matches/*.json - the raw per-match records, named by game id.
+# Mostly append-only: two writers normally add distinct files and never collide. The one
+# exception is the 48h after kickoff, during which a record can still be rewritten to add
+# player ratings 365scores had not published at the whistle (see RATING_RETRY_HOURS in
+# scripts/hta_fetch.py). A push racing another writer inside that window can therefore need
+# a rebase, which the cloud routine is told to do once before reporting failure.
 
 __pycache__/
 *.pyc

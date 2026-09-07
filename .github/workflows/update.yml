@@ -72,8 +72,11 @@ jobs:
 
       - name: Commit any newly ingested matches
         run: |
-          # Match records are immutable once final and named by game id, so runs only
-          # ever add distinct files - this cannot conflict with itself.
+          # Match records are named by game id, so runs almost always just add distinct
+          # files. Within 48h of kickoff a record may also be rewritten to pick up player
+          # ratings that were not published yet at the whistle, so a push here can race
+          # the cloud routine; the pull --rebase below settles that rather than failing
+          # the run over a data file both writers agree about.
           git config user.name  "HTA Stats bot"
           git config user.email "Zivgell@users.noreply.github.com"
           # Newly downloaded player photos are committed too. They are embedded in the
@@ -85,7 +88,14 @@ jobs:
             echo "nothing new to commit"
           else
             git commit -m "data: new match record(s) and/or player images [skip ci]"
-            git push
+            # The cloud routine writes the same paths on its own schedule, so the remote
+            # can have moved since checkout. One rebase and retry; if that still fails,
+            # fail loudly rather than leaving a half-finished state to discover later.
+            git push || {
+              echo "push rejected, rebasing onto the remote and retrying"
+              git pull --rebase origin main
+              git push
+            }
           fi
 
       - name: Assemble the site
