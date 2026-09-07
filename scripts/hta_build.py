@@ -129,6 +129,35 @@ def collect(cfg: dict) -> dict:
         for m in matches
     }
 
+    # A match under way. hta_fetch writes it to its own file, never into data/matches/,
+    # so the season aggregate cannot see it. Only what is meaningful before the whistle
+    # is carried across: the running score, goals, assists and cards. Minutes, clean
+    # sheets, מאזן and man of the match are full-time concepts - a 0-0 at halftime is not
+    # a clean sheet and a 1-0 lead is not a win - so they stay out until the match is
+    # final and ingested normally.
+    live_raw = read_json(DATA / "live_match.json", default={}) or {}
+    live = None
+    if live_raw.get("game_id"):
+        live = {
+            "game_id": live_raw.get("game_id"),
+            "competition": live_raw.get("competition_name"),
+            "opponent": live_raw.get("opponent"),
+            "is_home": live_raw.get("is_home"),
+            "team_score": live_raw.get("team_score"),
+            "opponent_score": live_raw.get("opponent_score"),
+            "status_text": live_raw.get("status_text"),
+            "events": [
+                {
+                    "min": e.get("minute"),
+                    "type": e.get("type_id"),
+                    "player": e.get("player"),
+                    "assist": e.get("extra_player"),
+                }
+                for e in (live_raw.get("events") or [])
+                if e.get("type_id") in (1, 2, 3) and not e.get("shootout")
+            ],
+        }
+
     # The source's "missing" list is captured in each match file but is NOT surfaced.
     # It proved untrustworthy: 8 of 10 matches reported nobody missing, return dates
     # were years stale ("Late October 2024"), and three players it listed as injured
@@ -188,6 +217,7 @@ def collect(cfg: dict) -> dict:
         "card_groups": cfg["competitions"].get("card_groups", []),
         "images": load_images(season),
         "match_events": match_events,
+        "live": live,
     }
 
 
@@ -527,6 +557,23 @@ ul.evt .min { color: var(--muted); font-variant-numeric: tabular-nums; min-width
 .card-y, .card-r { display: inline-block; width: 9px; height: 12px; border-radius: 2px; flex: none; }
 .card-y { background: var(--warning); }
 .card-r { background: var(--critical); }
+
+/* Live match. Visually set apart from the season card below it, because the numbers in
+   it are provisional and the ones below are not. */
+.live-card { border-color: var(--critical); }
+.live-card h2 { display: flex; align-items: center; gap: 8px; }
+.live-badge { background: var(--critical); color: #fff; border-radius: 999px;
+  padding: 1px 9px; font-size: 12px; font-weight: 700; letter-spacing: .5px; }
+.live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--critical);
+  flex: none; animation: livePulse 1.8s ease-in-out infinite; }
+@keyframes livePulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
+.live-score { display: flex; align-items: center; justify-content: center; gap: 14px;
+  margin: 6px 0 2px; flex-wrap: wrap; }
+.live-team { font-weight: 600; }
+.live-num { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.live-meta { text-align: center; margin: 0 0 6px; }
+.goal-ico { font-size: 13px; flex: none; }
 #matchBody tr { cursor: pointer; }
 
 /* ---------- phones ----------
@@ -610,6 +657,12 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; margin-t
 
 <div class="wrap">
   <div id="banners"></div>
+
+  <section class="card live-card" id="liveCard" hidden>
+    <h2><span class="live-dot" aria-hidden="true"></span>__L_LIVE_MATCH__ <span class="live-badge">__L_LIVE_BADGE__</span></h2>
+    <div id="liveBody"></div>
+    <p class="sub" style="margin:10px 0 0">__L_LIVE_NOTE__</p>
+  </section>
 
   <section class="card">
     <div class="controls">
@@ -1297,11 +1350,55 @@ function openPlayer(pid) {
   modal.showModal();
 }
 
+/* ---------- live match ---------- */
+// Rendered from DATA.live, which hta_fetch keeps in its own file so the season table
+// below is untouched until full time. Goals, assists and cards only - deliberately no
+// minutes, clean sheet or man of the match, none of which mean anything at halftime.
+function renderLive() {
+  const lv = DATA.live;
+  const card = document.getElementById('liveCard');
+  if (!lv) return;                       // no match under way; the card stays hidden
+
+  const here = lv.is_home ? 'הפועל תל אביב' : esc(lv.opponent);
+  const there = lv.is_home ? esc(lv.opponent) : 'הפועל תל אביב';
+  const score = lv.is_home
+    ? `${lv.team_score}-${lv.opponent_score}`
+    : `${lv.opponent_score}-${lv.team_score}`;
+
+  const evts = lv.events || [];
+  const line = (e, icon) => `<li>${icon}<span class="min">${esc(e.min)}'</span>
+      <strong>${esc(e.player)}</strong>` +
+      (e.assist ? ` <span class="sub">(${esc(L.assist_by)}: ${esc(e.assist)})</span>` : '') + `</li>`;
+  const goals = evts.filter(e => e.type === 1);
+  const cards = evts.filter(e => e.type === 2 || e.type === 3);
+
+  let html = `<div class="live-score">
+      <span class="live-team">${here}</span>
+      <span class="live-num">${esc(score)}</span>
+      <span class="live-team">${there}</span>
+    </div>
+    <p class="sub live-meta">${esc(lv.competition || '')}${lv.status_text ? ' · ' + esc(lv.status_text) : ''}</p>`;
+
+  if (!goals.length && !cards.length) {
+    html += `<p class="sub">${esc(L.live_no_events)}</p>`;
+  } else {
+    if (goals.length) html += `<h4>${esc(L.match_goals)}</h4>
+      <ul class="plain evt">${goals.map(g => line(g, '<span class="goal-ico">\\u26bd</span>')).join('')}</ul>`;
+    if (cards.length) html += `<h4>${esc(L.match_cards)}</h4>
+      <ul class="plain evt">${cards.map(c =>
+        line(c, c.type === 3 ? '<span class="card-r"></span>' : '<span class="card-y"></span>')).join('')}</ul>`;
+  }
+
+  document.getElementById('liveBody').innerHTML = html;
+  card.hidden = false;
+}
+
 /* ---------- init ---------- */
 try {
   const savedComp = localStorage.getItem('hta-comp');
   if (savedComp && (savedComp === 'total' || DATA.season.by_competition[savedComp])) activeComp = savedComp;
 } catch (e) {}
+renderLive();
 renderTabs();
 renderHead();
 renderBody();
@@ -1349,6 +1446,9 @@ def build_fingerprint(payload: dict) -> str:
         "crest": payload.get("crest"),
         "photos": payload.get("photos"),
         "match_events": payload.get("match_events"),
+        # In-play score and events. Including it means each live update republishes, which
+        # is the whole point of a live panel; between matches it is null and inert.
+        "live": payload.get("live"),
         "template": TEMPLATE,
     }
     blob = json.dumps(material, ensure_ascii=False, sort_keys=True, default=str)
@@ -1373,6 +1473,7 @@ def build_html(ctx: dict, path: Path) -> None:
         "crest": ctx["images"][0],
         "photos": ctx["images"][1],
         "match_events": ctx["match_events"],
+        "live": ctx["live"],
     }
     replacements = {
         "__FINGERPRINT__": build_fingerprint(payload),
@@ -1383,6 +1484,9 @@ def build_html(ctx: dict, path: Path) -> None:
         # "</" would end the enclosing <script> block early if it ever appeared in data.
         "__DATA__": json.dumps(payload, ensure_ascii=False).replace("</", "<\\/"),
         "__L_WHAT_CHANGED__": lab.get("what_changed", ""),
+        "__L_LIVE_MATCH__": lab.get("live_match", ""),
+        "__L_LIVE_BADGE__": lab.get("live_badge", ""),
+        "__L_LIVE_NOTE__": lab.get("live_note", ""),
         "__L_SEARCH__": lab.get("search", ""),
         "__L_GK__": lab.get("goalkeepers", ""),
         "__L_SCORERS__": lab.get("top_scorers", ""),
