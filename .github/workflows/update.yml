@@ -83,7 +83,7 @@ jobs:
           # page and hashed into the build fingerprint, so both this runner and the
           # user's PC must use byte-identical files or the artifact would republish
           # every run.
-          git add -- data/matches resources/images
+          git add -- data/matches resources/images data/live_match.json
           if git diff --cached --quiet; then
             echo "nothing new to commit"
           else

@@ -10,6 +10,7 @@ All parsing keys off stable numeric ids rather than Hebrew display strings:
 from __future__ import annotations
 
 import time
+from datetime import datetime, timedelta, timezone
 
 from .common import BROWSER_UA, SourceError, http_get
 
@@ -73,8 +74,37 @@ class Api365:
     # ---------------------------------------------------------------- feeds
 
     def results(self) -> list[dict]:
-        """Every played match. This feed drives ingestion, not the fixture list."""
+        """Every played match. Season backfill; NOT sufficient on its own - see recent()."""
         payload = self._get("games/results/", {"competitors": str(self.team_id)})
+        return payload.get("games", []) or []
+
+    def recent(self, days_back: int = 14) -> list[dict]:
+        """Games in a date window, finished or in play.
+
+        Exists because the bare results feed lags by an unknown amount. On 2026-09-07 it
+        returned 26 games and omitted a league match that had finished an hour earlier;
+        the identical endpoint with a date range returned 27 and included it. 365scores had
+        already dropped that game from the fixtures feed, so it sat in a gap between the two
+        standing feeds - invisible to ingestion while its own game record was complete, with
+        score, lineups and events all present.
+
+        The window has to stay modest: asking for 01/07-31/12 returns zero games, while
+        01/08-08/09 correctly returns eight. Dates are dd/mm/yyyy.
+
+        Unlike results(), this includes matches that are under way, which is what the live
+        panel is built from.
+        """
+        today = datetime.now(timezone.utc).date()
+        payload = self._get(
+            "games/",
+            {
+                "competitors": str(self.team_id),
+                "startDate": (today - timedelta(days=days_back)).strftime("%d/%m/%Y"),
+                # Tomorrow, not today: kickoff times are local and a late match can already
+                # be "tomorrow" in UTC terms by the time the last evening run looks.
+                "endDate": (today + timedelta(days=1)).strftime("%d/%m/%Y"),
+            },
+        )
         return payload.get("games", []) or []
 
     def fixtures(self) -> list[dict]:

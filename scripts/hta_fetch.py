@@ -109,13 +109,79 @@ def within_retry_window(record: dict, now: datetime) -> bool:
     return bool(start and now - start < timedelta(hours=RATING_RETRY_HOURS))
 
 
+def merge_feeds(*feeds: list[dict]) -> list[dict]:
+    """One game list, deduplicated by id, with later feeds winning.
+
+    results() and recent() overlap heavily but each sees things the other does not:
+    results() covers the whole season, recent() covers the last fortnight and includes
+    matches results() has not caught up with yet. Later feeds win, so the fresher view of
+    a game's status is the one that survives.
+    """
+    merged: dict[str, dict] = {}
+    for feed in feeds:
+        for game in feed or []:
+            gid = game.get("id")
+            if gid is not None:
+                merged[str(gid)] = game
+    return list(merged.values())
+
+
+def kickoff_passed(game: dict, now: datetime) -> bool:
+    start = _parse_time(game.get("startTime"))
+    return bool(start and start <= now)
+
+
+LIVE_PATH = DATA / "live_match.json"
+
+
+def capture_live(api: Api365, live_games: list[dict], already_handled: set[str]) -> str | None:
+    """Snapshot a match that is under way, well away from the season totals.
+
+    Written to its own file rather than data/matches/, so hta_aggregate.py cannot see it
+    and the season figures stay full-time-only. That is the point: a 0-0 at halftime is
+    not a clean sheet and a 1-0 lead is not a win, so מאזן and שערים נקיים must not move
+    until the whistle. Only goals, assists and cards are meaningful in-play, and only
+    those are rendered.
+
+    The file is always written - {} when nothing is live - rather than deleted, so the
+    committed path is stable and a finished match reliably clears the panel.
+    """
+    for game in live_games:
+        gid = str(game.get("id"))
+        if gid in already_handled:
+            continue  # went final between reading the feed and now; the real record wins
+        try:
+            record = api.parse_game(api.game(int(gid)))
+        except Exception as exc:  # noqa: BLE001
+            LOG.error("could not read live game %s: %s", gid, exc)
+            continue
+        write_json(LIVE_PATH, record)
+        LOG.info("live: %s %s-%s %s (%s)", record["competition_name"], record["team_score"],
+                 record["opponent_score"], record["opponent"], record.get("status_text"))
+        return gid
+
+    write_json(LIVE_PATH, {})
+    return None
+
+
 def ingest_matches(api: Api365, cfg: dict, *, force: bool = False) -> dict:
     """Fetch every finished match we do not already hold. Returns a run summary."""
     MATCHES.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc)
 
-    games = api.results()
-    finished = [g for g in games if api.is_final(g) and relevant(g, cfg)]
-    LOG.info("results feed: %d games, %d finished and in scope", len(games), len(finished))
+    # Two feeds, because one is not enough. See Api365.recent(): the plain results feed
+    # silently omitted a league match that had finished an hour earlier, and the fixtures
+    # feed had already dropped it, so it was invisible to ingestion despite its own game
+    # record being complete.
+    games = merge_feeds(api.results(), api.recent())
+    in_scope = [g for g in games if relevant(g, cfg)]
+    finished = [g for g in in_scope if api.is_final(g)]
+    # "Not final and kicked off" rather than a hardcoded in-play status id: finished (4)
+    # and not-started (2) are the only values actually observed, and guessing the live
+    # constant is the same kind of assumption that hid tonight's match in the first place.
+    live_games = [g for g in in_scope if not api.is_final(g) and kickoff_passed(g, now)]
+    LOG.info("feeds: %d games, %d in scope, %d finished, %d in play",
+             len(games), len(in_scope), len(finished), len(live_games))
 
     # A match is only "done" once it is final AND carries real player stats. Matches
     # cached without stats stay eligible for re-fetching in case they fill in later.
@@ -130,7 +196,6 @@ def ingest_matches(api: Api365, cfg: dict, *, force: bool = False) -> dict:
     # the July cup tie has never carried stats, and ratings for the July league games have
     # since expired upstream. Unbounded, those would each cost a request on every run for
     # the rest of the season.
-    now = datetime.now(timezone.utc)
     cached, incomplete, awaiting_ratings = set(), set(), set()
     for path in MATCHES.glob("*.json"):
         cached.add(path.stem)
@@ -180,9 +245,12 @@ def ingest_matches(api: Api365, cfg: dict, *, force: bool = False) -> dict:
             len(record["players"]),
         )
 
+    live_id = capture_live(api, live_games, already_handled={*new_ids, *refreshed_ids})
+
     return {
         "finished_in_scope": len(finished),
         "already_cached": len(cached),
+        "live_match": live_id,
         "newly_ingested": new_ids,
         "refreshed_incomplete": refreshed_ids,
         # Matches still waiting on ratings AFTER this run - i.e. ones that will be asked
