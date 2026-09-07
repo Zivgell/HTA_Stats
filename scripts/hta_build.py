@@ -460,8 +460,15 @@ th {
 }
 th:hover { color: var(--text-primary); }
 th.name-col, td.name-col { text-align: right; }
-/* Keep the player's name in view when scrolling the columns sideways. */
-th.name-col, td.name-col { position: sticky; right: 0; background: var(--surface-1); }
+/* Keep the player's name in view when scrolling the columns sideways.
+   translateZ/backface promote these to their own compositing layer: without it, iOS
+   Safari intermittently fails to repaint a sticky cell during momentum scrolling, so
+   names and photos blank out until a touch forces a redraw. */
+th.name-col, td.name-col {
+  position: sticky; right: 0; background: var(--surface-1);
+  transform: translateZ(0); -webkit-transform: translateZ(0);
+  backface-visibility: hidden; -webkit-backface-visibility: hidden;
+}
 td.name-col { z-index: 1; }
 th.name-col { z-index: 3; }
 tbody tr { border-bottom: 1px solid var(--grid); }
@@ -531,7 +538,11 @@ ul.evt .min { color: var(--muted); font-variant-numeric: tabular-nums; min-width
 @media (max-width: 700px) {
   .wrap { padding: 0 10px; }
   .tbl-scroll { -webkit-overflow-scrolling: touch; }
-  .tbl-scroll.tall { max-height: none; overflow: visible; overflow-x: auto; }
+  /* Must stay BOUNDED. A sticky header sticks to the top of its scroll container, so
+     with max-height:none it sticks to a box taller than the screen and scrolls away -
+     the same bug fixed on desktop, reintroduced here when the nested scroll was removed.
+     Nested scrolling is the price of a sticky header on a horizontally scrolling table. */
+  .tbl-scroll.tall { max-height: 78vh; overflow: auto; }
   th, td { padding: 11px 7px; }
   td.name-col { max-width: 44vw; overflow: hidden; text-overflow: ellipsis; }
   section.card { padding: 12px 11px; }
@@ -706,7 +717,9 @@ const esc = s => String(s == null ? '' : s)
    image icon, so a new signing degrades quietly. */
 function avatar(row) {
   const src = (DATA.photos || {})[String(row.athlete_id)];
-  if (src) return `<img class="avatar" src="${src}" alt="" loading="lazy" width="28" height="28">`;
+  // No loading="lazy": these are data URIs, so there is nothing to defer - it saves zero
+  // bytes and invites blank-until-touched decoding while scrolling.
+  if (src) return `<img class="avatar" src="${src}" alt="" width="28" height="28">`;
   // The whitespace class below is double-escaped on purpose: TEMPLATE is a normal
   // Python string (it relies on unicode escapes elsewhere, so it cannot be raw), and a
   // single backslash here would be read as a Python escape and raise a SyntaxWarning.

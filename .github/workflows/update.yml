@@ -27,6 +27,12 @@ on:
     # :07 also suits the fixtures: Israeli kick-offs cluster at 20:00, so whistles cluster
     # around :55, which a :07 slot picks up about 12 minutes later.
     - cron: '7 6,13,14,15,16,17,18,19,20,21 * * *'
+    # A second slot per hour. GitHub drops roughly 70% of scheduled runs regardless of
+    # minute, so this is not a fix - it just gives the backstop more chances. The
+    # reliable trigger is a push from the cloud routine, which fires every time.
+    - cron: '37 13,14,15,16,17,18,19,20,21 * * *'
+    # One-off demonstration slot, 12:45 Israel.
+    - cron: '45 9 7 9 *'
   workflow_dispatch:      # lets it be run by hand from the Actions tab
   push:
     branches: [main]
