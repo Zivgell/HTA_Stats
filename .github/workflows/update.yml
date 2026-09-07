@@ -32,6 +32,12 @@ on:
     # reliable trigger is a push from the cloud routine, which fires every time.
     - cron: '37 13,14,15,16,17,18,19,20,21 * * *'
   workflow_dispatch:      # lets it be run by hand from the Actions tab
+    inputs:
+      demo_live:
+        description: 'Show a fake in-progress match, to preview the live panel'
+        type: boolean
+        default: false
+        required: false
   push:
     branches: [main]
     # No paths filter, deliberately. It used to list scripts/ and resources/ only, which
@@ -70,33 +76,38 @@ jobs:
       - name: Fetch, aggregate and build
         run: bash scripts/run_update.sh
 
-      - name: Commit any newly ingested matches
+      # Only reachable from a hand-started run with the box ticked, so no scheduled or
+      # push-triggered run can ever publish a fake match. It exists because the live panel
+      # otherwise cannot be seen until a real match is under way, and "press the button and
+      # watch the page change" is exactly the behaviour that needs to be trustworthy.
+      # Overwrites the live file after the pipeline has run, then rebuilds the page alone -
+      # the season aggregate is untouched, because the live match never enters data/matches/.
+      - name: Inject a synthetic live match (manual preview only)
+        if: ${{ inputs.demo_live }}
         run: |
-          # Match records are named by game id, so runs almost always just add distinct
-          # files. Within 48h of kickoff a record may also be rewritten to pick up player
-          # ratings that were not published yet at the whistle, so a push here can race
-          # the cloud routine; the pull --rebase below settles that rather than failing
-          # the run over a data file both writers agree about.
-          git config user.name  "HTA Stats bot"
-          git config user.email "Zivgell@users.noreply.github.com"
-          # Newly downloaded player photos are committed too. They are embedded in the
-          # page and hashed into the build fingerprint, so both this runner and the
-          # user's PC must use byte-identical files or the artifact would republish
-          # every run.
-          git add -- data/matches resources/images data/live_match.json
-          if git diff --cached --quiet; then
-            echo "nothing new to commit"
-          else
-            git commit -m "data: new match record(s) and/or player images [skip ci]"
-            # The cloud routine writes the same paths on its own schedule, so the remote
-            # can have moved since checkout. One rebase and retry; if that still fails,
-            # fail loudly rather than leaving a half-finished state to discover later.
-            git push || {
-              echo "push rejected, rebasing onto the remote and retrying"
-              git pull --rebase origin main
-              git push
-            }
-          fi
+          python - <<'PY'
+          import json, pathlib
+          pathlib.Path("data/live_match.json").write_text(json.dumps({
+              "game_id": 9999001,
+              "competition_name": "ליגת העל",
+              "opponent": "קבוצת הדגמה",
+              "is_home": False,
+              "team_score": 1,
+              "opponent_score": 1,
+              "status_text": "הדגמה - לא משחק אמיתי",
+              "final": False,
+              "stats_complete": True,
+              "events": [
+                  {"minute": 12, "type_id": 1, "player": "דוגלאס אווסו",
+                   "extra_player": "רוי קורין", "shootout": False},
+                  {"minute": 34, "type_id": 2, "player": "אנדריאן קרייב",
+                   "extra_player": None, "shootout": False},
+              ],
+              "players": [],
+          }, ensure_ascii=False, indent=2), encoding="utf-8")
+          print("wrote a synthetic live match for preview")
+          PY
+          python scripts/hta_build.py
 
       - name: Assemble the site
         run: |
@@ -118,3 +129,44 @@ jobs:
 
       - id: deploy
         uses: actions/deploy-pages@v4
+
+      # Deliberately AFTER the deploy, and deliberately unable to fail the job.
+      #
+      # The published page is built from output/ in this same run - it does not come from
+      # what is committed here. Git is bookkeeping: it carries match records between runs
+      # and keeps this runner and the user's PC on byte-identical images. So a commit
+      # problem must never cost the user a page update, which is what it used to do when
+      # this step sat in front of the deploy.
+      #
+      # That mattered most at the worst possible moment. Between matches the writers only
+      # ever add distinct files named by game id and cannot collide. During a match the
+      # cloud routine and any hand-started run both rewrite the SAME file,
+      # data/live_match.json, every run - so a rejected push, a conflicted rebase, and a
+      # dead job were the expected case exactly when the page most needed to refresh.
+      #
+      # On conflict the commit is simply abandoned. Nothing is lost: every run re-fetches
+      # from 365scores from scratch, so the next one re-derives and re-commits it.
+      - name: Commit any newly ingested matches
+        continue-on-error: true
+        run: |
+          if [ "${{ inputs.demo_live }}" = "true" ]; then
+            echo "preview run: discarding the synthetic live match instead of committing it"
+            git checkout -- data/live_match.json
+          fi
+          git config user.name  "HTA Stats bot"
+          git config user.email "Zivgell@users.noreply.github.com"
+          git add -- data/matches resources/images data/live_match.json
+          if git diff --cached --quiet; then
+            echo "nothing new to commit"
+          else
+            git commit -m "data: new match record(s) and/or player images [skip ci]"
+            git push || {
+              echo "push rejected; rebasing onto the remote and retrying"
+              git pull --rebase origin main || {
+                echo "rebase conflicted - abandoning this commit, the next run re-derives it"
+                git rebase --abort || true
+                exit 0
+              }
+              git push || echo "still could not push; the deploy already happened regardless"
+            }
+          fi
