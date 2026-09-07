@@ -36,11 +36,11 @@ on:
   workflow_dispatch:      # lets it be run by hand from the Actions tab
   push:
     branches: [main]
-    paths:                # a code or config change should redeploy the page
-      - 'scripts/**'
-      - 'resources/**'
-      - 'requirements.txt'
-      - '.github/workflows/update.yml'
+    # No paths filter, deliberately. It used to list scripts/ and resources/ only, which
+    # silently swallowed the cloud routine's push of data/heartbeat.txt - the routine
+    # pushed successfully and nothing deployed. The published page should simply reflect
+    # main, so every push to main rebuilds it. No loop risk: this workflow's own commits
+    # carry [skip ci].
 
 permissions:
   contents: write         # to commit newly ingested match records
