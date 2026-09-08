@@ -11,26 +11,23 @@ name: Update dashboard
 
 on:
   schedule:
-    # Hourly through the evening, UTC. Israeli matches finish roughly 16:40-23:25 local
-    # (UTC+3 in summer, +2 in winter), so this window catches every kickoff pattern.
-    # Plus 06:07 UTC (~09:07 Israel) as a catch-up, because nothing runs for the ~15 hours
-    # between the last evening slot and the first afternoon one.
+    # BACKSTOP ONLY. The primary path is: a once-daily cloud routine that, on a day with a
+    # fixture, schedules a one-off wake-up to ingest the match after full time. Live scores
+    # during a match need nothing here at all - the published page fetches them from
+    # 365scores in the visitor's browser.
     #
-    # Minute :07, NOT :00 - this is measured, not superstition. At minute 0 the observed
-    # behaviour on 2026-09-05 was a median 57-minute delay AND half the slots dropped
-    # outright (17:00 ran 17:54, 18:00 never ran, 19:00 ran 19:57, 20:00 never ran,
-    # 21:00 ran 21:58). GitHub documents the cause: "The schedule event can be delayed
-    # during periods of high loads... High load times include the start of every hour...
-    # some queued jobs may be dropped. To decrease the chance of delay, schedule your
-    # workflow to run at a different time of the hour."
+    # These slots exist purely so a failure of that chain is recovered within an hour or two
+    # instead of waiting for the next morning. A run with nothing to do costs seconds and
+    # changes nothing: no commit, no deploy, no page churn.
     #
-    # :07 also suits the fixtures: Israeli kick-offs cluster at 20:00, so whistles cluster
-    # around :55, which a :07 slot picks up about 12 minutes later.
-    - cron: '7 6,13,14,15,16,17,18,19,20,21 * * *'
-    # A second slot per hour. GitHub drops roughly 70% of scheduled runs regardless of
-    # minute, so this is not a fix - it just gives the backstop more chances. The
-    # reliable trigger is a push from the cloud routine, which fires every time.
-    - cron: '37 13,14,15,16,17,18,19,20,21 * * *'
+    # Kept sparse on purpose. GitHub drops and delays most scheduled runs - observed firing
+    # at 10:59, 17:10, 21:44 against configured :07/:37 slots - so a dense cron here would
+    # be noise pretending to be a schedule.
+    # Every three hours across the window Israeli matches are played and finished in
+    # (17:00-23:00 UTC ~ 20:00-02:00 local), plus one mid-morning slot.
+    # Minute :17 rather than :00 - GitHub itself advises against the top of the hour,
+    # where load is highest and drops are worst.
+    - cron: '17 8,17,20,23 * * *'
   workflow_dispatch:      # lets it be run by hand from the Actions tab
     inputs:
       demo_live:

@@ -126,11 +126,6 @@ def merge_feeds(*feeds: list[dict]) -> list[dict]:
     return list(merged.values())
 
 
-def kickoff_passed(game: dict, now: datetime) -> bool:
-    start = _parse_time(game.get("startTime"))
-    return bool(start and start <= now)
-
-
 LIVE_PATH = DATA / "live_match.json"
 
 
@@ -176,10 +171,10 @@ def ingest_matches(api: Api365, cfg: dict, *, force: bool = False) -> dict:
     games = merge_feeds(api.results(), api.recent())
     in_scope = [g for g in games if relevant(g, cfg)]
     finished = [g for g in in_scope if api.is_final(g)]
-    # "Not final and kicked off" rather than a hardcoded in-play status id: finished (4)
-    # and not-started (2) are the only values actually observed, and guessing the live
-    # constant is the same kind of assumption that hid tonight's match in the first place.
-    live_games = [g for g in in_scope if not api.is_final(g) and kickoff_passed(g, now)]
+    # statusGroup == 3, now read off real live games rather than inferred. The earlier
+    # "not final and kicked off" test would have called a postponed or abandoned match
+    # live, and shown a frozen 0-0 as though it were in progress.
+    live_games = [g for g in in_scope if api.is_live(g)]
     LOG.info("feeds: %d games, %d in scope, %d finished, %d in play",
              len(games), len(in_scope), len(finished), len(live_games))
 

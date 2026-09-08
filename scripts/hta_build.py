@@ -139,6 +139,11 @@ def collect(cfg: dict) -> dict:
     live = None
     if live_raw.get("game_id"):
         live = {
+            # Stamped so the page can refuse to show a stale score. The panel is normally
+            # driven by the browser polling 365scores directly; this server-captured copy
+            # is only a fallback for when that request cannot be made (the Artifact host
+            # blocks external fetches) or fails.
+            "captured_at": datetime.now(timezone.utc).isoformat(),
             "game_id": live_raw.get("game_id"),
             "competition": live_raw.get("competition_name"),
             "opponent": live_raw.get("opponent"),
@@ -218,6 +223,19 @@ def collect(cfg: dict) -> dict:
         "images": load_images(season),
         "match_events": match_events,
         "live": live,
+        # Lets the open page fetch the live score itself, straight from 365scores, instead
+        # of waiting for a machine to rebuild and republish the page. 365scores serves
+        # 'Access-Control-Allow-Origin: *' with a 12-second cache, so a browser may ask it
+        # directly - which makes in-match updates real-time and costs no CI run, no deploy
+        # and no commit. Nothing here is a secret: it is the same public endpoint the
+        # pipeline uses, and the page falls back to the server-captured score if the
+        # request is refused (the Artifact host blocks external fetches).
+        "live_api": {
+            "base": cfg["api365"]["base_url"],
+            "params": cfg["api365"]["params"],
+            "team_id": cfg["team"]["competitor_id"],
+            "live_status": 3,   # statusGroup 3 == in play; confirmed against live games
+        },
     }
 
 
@@ -659,7 +677,7 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; margin-t
   <div id="banners"></div>
 
   <section class="card live-card" id="liveCard" hidden>
-    <h2><span class="live-dot" aria-hidden="true"></span>__L_LIVE_MATCH__ <span class="live-badge">__L_LIVE_BADGE__</span></h2>
+    <h2><span class="live-dot" id="liveDot" aria-hidden="true"></span>__L_LIVE_MATCH__ <span class="live-badge" id="liveBadge">__L_LIVE_BADGE__</span></h2>
     <div id="liveBody"></div>
     <p class="sub" style="margin:10px 0 0">__L_LIVE_NOTE__</p>
   </section>
@@ -1350,12 +1368,86 @@ function openPlayer(pid) {
   modal.showModal();
 }
 
-/* ---------- live match ---------- */
-// Rendered from DATA.live, which hta_fetch keeps in its own file so the season table
-// below is untouched until full time. Goals, assists and cards only - deliberately no
-// minutes, clean sheet or man of the match, none of which mean anything at halftime.
-function renderLive() {
-  const lv = DATA.live;
+/* ---------- live match ----------
+   The panel is driven by THIS PAGE asking 365scores for the score every 30 seconds, not
+   by a server rebuilding and republishing the page. 365scores permits cross-origin reads
+   ('Access-Control-Allow-Origin: *', 12s cache), so a match is followed in real time with
+   no CI run, no deploy and no commit - and nothing to go wrong on a scheduler.
+
+   DATA.live is only a fallback, for when that request cannot be made at all: the Artifact
+   host blocks external fetches. It is refused when stale, so a finished match never lingers
+   as a "live" panel.
+
+   Season figures are never touched here. מאזן, שערים נקיים, minutes and מצטיין המשחק are
+   full-time concepts and wait for the match to be ingested. */
+
+const LIVE_FRESH_MS   = 20 * 60 * 1000;   // a server-captured score older than this is dropped
+const LIVE_POLL_LIVE  = 30 * 1000;        // while a match is in play
+const LIVE_POLL_IDLE  = 90 * 1000;        // while waiting for one to start
+
+function liveUrl(path, extra) {
+  const cfg = DATA.live_api;
+  const qs = new URLSearchParams(Object.assign({}, cfg.params, extra || {}));
+  return `${cfg.base}/${path}?${qs}`;
+}
+
+function ddmmyyyy(d) {
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
+// Turn a raw 365scores game into the same shape the server-side capture produces, so one
+// renderer serves both sources.
+function normaliseLive(g) {
+  const T = DATA.live_api.team_id;
+  const home = g.homeCompetitor || {}, away = g.awayCompetitor || {};
+  const isHome = home.id === T;
+  const us = isHome ? home : away, them = isHome ? away : home;
+  const names = {};
+  (g.members || []).forEach(m => { if (m && m.id != null) names[m.id] = m.name; });
+  const events = (g.events || [])
+    .filter(e => e.competitorId === T)
+    .map(e => ({
+      min: e.gameTime == null ? null : Math.round(e.gameTime),
+      type: (e.eventType || {}).id,
+      player: names[e.playerId],
+      assist: (e.extraPlayers || []).length ? names[e.extraPlayers[0]] : null,
+      // Past the end of extra time is a shootout, never a goal - same rule as the pipeline.
+      shootout: (e.gameTime || 0) > 120,
+    }))
+    .filter(e => (e.type === 1 || e.type === 2 || e.type === 3) && !e.shootout);
+  return {
+    opponent: them.name, is_home: isHome,
+    team_score: Math.round(us.score || 0), opponent_score: Math.round(them.score || 0),
+    competition: g.competitionDisplayName,
+    status_text: g.gameTimeDisplay || g.statusText,
+    in_play: g.statusGroup === DATA.live_api.live_status,
+    events,
+  };
+}
+
+// Ask 365scores whether a match is on, and if so render it. Returns the next poll delay.
+async function pollLive() {
+  if (document.hidden) return LIVE_POLL_IDLE;   // don't poll a tab nobody is looking at
+  const now = new Date();
+  const day = 86400000;
+  const list = await fetch(liveUrl('games/', {
+    competitors: String(DATA.live_api.team_id),
+    startDate: ddmmyyyy(new Date(now - day)),
+    endDate: ddmmyyyy(new Date(+now + day)),
+  })).then(r => r.json());
+
+  const g = (list.games || []).find(x => x.statusGroup === DATA.live_api.live_status);
+  if (!g) { hideLive(); return LIVE_POLL_IDLE; }
+
+  const full = await fetch(liveUrl('game/', { gameId: String(g.id) })).then(r => r.json());
+  renderLiveFrom(normaliseLive(full.game || g));
+  return LIVE_POLL_LIVE;
+}
+
+function hideLive() { document.getElementById('liveCard').hidden = true; }
+
+function renderLiveFrom(lv) {
   const card = document.getElementById('liveCard');
   if (!lv) return;                       // no match under way; the card stays hidden
 
@@ -1390,7 +1482,35 @@ function renderLive() {
   }
 
   document.getElementById('liveBody').innerHTML = html;
+  // The pulsing badge claims the match is happening NOW, so it is shown only when the
+  // source says in-play. Between the whistle and ingestion the panel stays up, correctly
+  // labelled as finished, so the result does not vanish for half an hour.
+  const badge = document.getElementById('liveBadge');
+  const dot = document.getElementById('liveDot');
+  const playing = lv.in_play !== false;
+  badge.textContent = playing ? L.live_badge : (lv.status_text || '');
+  badge.hidden = !playing && !lv.status_text;
+  dot.hidden = !playing;
   card.hidden = false;
+}
+
+// On load: paint the server-captured score straight away IF it is recent, so the panel is
+// not blank while the first fetch is in flight. A stale capture is ignored rather than
+// shown - that is what stops the Artifact copy, which cannot fetch at all, from displaying
+// an old match as though it were live.
+function startLive() {
+  const lv = DATA.live;
+  if (lv && lv.captured_at && (Date.now() - Date.parse(lv.captured_at)) < LIVE_FRESH_MS) {
+    renderLiveFrom(Object.assign({ in_play: true }, lv));
+  }
+  if (!DATA.live_api) return;
+  const tick = () => pollLive()
+    .then(delay => setTimeout(tick, delay))
+    // A refused or failed request is not an error worth shouting about: it just means
+    // this copy of the page cannot reach 365scores (the Artifact host blocks it). Keep
+    // whatever is on screen and stop asking.
+    .catch(() => {});
+  tick();
 }
 
 /* ---------- init ---------- */
@@ -1398,7 +1518,7 @@ try {
   const savedComp = localStorage.getItem('hta-comp');
   if (savedComp && (savedComp === 'total' || DATA.season.by_competition[savedComp])) activeComp = savedComp;
 } catch (e) {}
-renderLive();
+startLive();
 renderTabs();
 renderHead();
 renderBody();
@@ -1446,9 +1566,12 @@ def build_fingerprint(payload: dict) -> str:
         "crest": payload.get("crest"),
         "photos": payload.get("photos"),
         "match_events": payload.get("match_events"),
-        # In-play score and events. Including it means each live update republishes, which
-        # is the whole point of a live panel; between matches it is null and inert.
-        "live": payload.get("live"),
+        # "live" is deliberately NOT hashed. The live panel is driven by the browser polling
+        # 365scores, so an in-play score no longer needs the page to be republished to be
+        # seen - and hashing it would republish the artifact every few minutes during a
+        # match for a fallback nobody reads. Season data, which does need republishing,
+        # is covered above.
+        "live_api": payload.get("live_api"),
         "template": TEMPLATE,
     }
     blob = json.dumps(material, ensure_ascii=False, sort_keys=True, default=str)
@@ -1474,6 +1597,7 @@ def build_html(ctx: dict, path: Path) -> None:
         "photos": ctx["images"][1],
         "match_events": ctx["match_events"],
         "live": ctx["live"],
+        "live_api": ctx["live_api"],
     }
     replacements = {
         "__FINGERPRINT__": build_fingerprint(payload),

@@ -32,6 +32,10 @@ STATUS_SUBSTITUTE = 2
 STATUS_MISSING = 3
 
 STATUS_GROUP_FINISHED = 4
+# 3 == in play. Read off live games on 2026-09-08 rather than guessed: 218 games that day
+# split 4/2/3 into finished, not-started and in-play. Testing "not finished" instead would
+# call a postponed or abandoned match live.
+STATUS_GROUP_LIVE = 3
 
 HEADERS = {
     "User-Agent": BROWSER_UA,
@@ -124,6 +128,10 @@ class Api365:
     @staticmethod
     def is_final(game_summary: dict) -> bool:
         return game_summary.get("statusGroup") == STATUS_GROUP_FINISHED
+
+    @staticmethod
+    def is_live(game_summary: dict) -> bool:
+        return game_summary.get("statusGroup") == STATUS_GROUP_LIVE
 
     def _stat(self, member: dict, key: str):
         wanted = self.stat_types[key]
