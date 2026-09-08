@@ -239,13 +239,48 @@ class Api365:
         sub_off: dict[int, int] = {}
         events_out = []
 
+        # 365scores sometimes carries two member records for one player - a real one and a
+        # bare duplicate with no athleteId, no shirt number and a Latin-script name - and
+        # can hang an event on the duplicate. That cost סתיו טוריאל a yellow card against
+        # Atalanta: the 87th-minute booking was filed under an id that is in no lineup, so
+        # it matched no player and was silently dropped. nameForURL is identical on both
+        # records ("stav-turiel"), and is the only field that is, so it is the join key.
+        lineup_ids = {
+            m.get("id") for m in (side.get("lineups") or {}).get("members") or []
+        }
+        alias_to_real: dict[str, int] = {}
+        for m in names.values():
+            slug = m.get("nameForURL")
+            if slug and m.get("id") in lineup_ids:
+                alias_to_real[slug] = m["id"]
+
+        def resolve(pid):
+            """Map a duplicate member id onto the real squad member it belongs to."""
+            if pid in lineup_ids or pid is None:
+                return pid
+            slug = (names.get(pid) or {}).get("nameForURL")
+            return alias_to_real.get(slug, pid) if slug else pid
+
+        def is_ours(pid) -> bool:
+            return (names.get(pid) or {}).get("competitorId") == self.team_id
+
         for ev in game.get("events") or []:
-            if ev.get("competitorId") != self.team_id:
-                continue
             etype = (ev.get("eventType") or {}).get("id")
-            pid = ev.get("playerId")
+            pid = resolve(ev.get("playerId"))
             minute = self._as_number(ev.get("gameTime"), int)
-            extras = ev.get("extraPlayers") or []
+            extras = [resolve(x) for x in (ev.get("extraPlayers") or [])]
+
+            # Cards are judged by WHOSE PLAYER was booked, everything else by which team
+            # the event counts for. They differ, and assuming otherwise is wrong: in Real
+            # Madrid v Inter on 2026-09-08 two bookings in the 79th minute arrived with
+            # their competitorIds swapped, so an Inter booking was filed against Madrid.
+            # A goal must stay keyed on competitorId, because an own goal counts for the
+            # other side - which is exactly how the 4-0 against Ramat Gan was read.
+            if etype in (EVENT_YELLOW, EVENT_RED):
+                if not is_ours(pid):
+                    continue
+            elif ev.get("competitorId") != self.team_id:
+                continue
 
             if etype == EVENT_YELLOW:
                 cards.setdefault(pid, []).append(minute)

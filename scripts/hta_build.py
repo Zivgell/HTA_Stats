@@ -589,6 +589,7 @@ ul.evt .min { color: var(--muted); font-variant-numeric: tabular-nums; min-width
 .live-score { display: flex; align-items: center; justify-content: center; gap: 14px;
   margin: 6px 0 2px; flex-wrap: wrap; }
 .live-team { font-weight: 600; }
+.live-dash { opacity:.55; font-weight:600; }
 .live-num { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .live-meta { text-align: center; margin: 0 0 6px; }
 .goal-ico { font-size: 13px; flex: none; }
@@ -1403,19 +1404,29 @@ function normaliseLive(g) {
   const home = g.homeCompetitor || {}, away = g.awayCompetitor || {};
   const isHome = home.id === T;
   const us = isHome ? home : away, them = isHome ? away : home;
-  const names = {};
-  (g.members || []).forEach(m => { if (m && m.id != null) names[m.id] = m.name; });
+  const names = {}, memTeam = {};
+  (g.members || []).forEach(m => {
+    if (m && m.id != null) { names[m.id] = m.name; memTeam[m.id] = m.competitorId; }
+  });
+  // A card is judged by WHOSE PLAYER was booked; a goal by which team it counts for.
+  // Those differ. In Real Madrid v Inter on 2026-09-08 two 79th-minute bookings arrived
+  // with their competitorIds swapped, and this panel duly showed an Inter card as ours.
+  // Goals must stay on competitorId, because an own goal counts for the other side.
   const events = (g.events || [])
-    .filter(e => e.competitorId === T)
     .map(e => ({
       min: e.gameTime == null ? null : Math.round(e.gameTime),
       type: (e.eventType || {}).id,
+      forTeam: e.competitorId,
+      playerTeam: memTeam[e.playerId],
       player: names[e.playerId],
       assist: (e.extraPlayers || []).length ? names[e.extraPlayers[0]] : null,
       // Past the end of extra time is a shootout, never a goal - same rule as the pipeline.
       shootout: (e.gameTime || 0) > 120,
     }))
-    .filter(e => (e.type === 1 || e.type === 2 || e.type === 3) && !e.shootout);
+    .filter(e => !e.shootout && (
+      e.type === 1 ? e.forTeam === T
+      : (e.type === 2 || e.type === 3) ? e.playerTeam === T
+      : false));
   return {
     opponent: them.name, is_home: isHome,
     team_score: Math.round(us.score || 0), opponent_score: Math.round(them.score || 0),
@@ -1427,6 +1438,9 @@ function normaliseLive(g) {
 }
 
 // Ask 365scores whether a match is on, and if so render it. Returns the next poll delay.
+let liveMisses = 0;      // consecutive polls that found no live match
+let liveGameId = null;   // the match we are following, once known
+
 async function pollLive() {
   if (document.hidden) return LIVE_POLL_IDLE;   // don't poll a tab nobody is looking at
   const now = new Date();
@@ -1438,8 +1452,31 @@ async function pollLive() {
   })).then(r => r.json());
 
   const g = (list.games || []).find(x => x.statusGroup === DATA.live_api.live_status);
-  if (!g) { hideLive(); return LIVE_POLL_IDLE; }
 
+  if (!g) {
+    // A single response that omits the match must NOT blank the panel. This feed lags -
+    // it hid a finished match from ingestion for an hour - and hiding on one miss made
+    // the score vanish for a couple of minutes at a time while a game was clearly on.
+    liveMisses++;
+    if (liveGameId) {
+      // We know which match we were watching, so ask about it directly. If it has simply
+      // ended, show the final score rather than dropping it off the page.
+      try {
+        const full = await fetch(liveUrl('game/', { gameId: String(liveGameId) }))
+          .then(r => r.json());
+        const rec = normaliseLive(full.game);
+        renderLiveFrom(rec);
+        if (!rec.in_play) { liveGameId = null; return LIVE_POLL_IDLE * 10; }
+        liveMisses = 0;
+        return LIVE_POLL_LIVE;
+      } catch (e) { /* fall through to the miss counter */ }
+    }
+    if (liveMisses >= 3) hideLive();
+    return LIVE_POLL_IDLE;
+  }
+
+  liveMisses = 0;
+  liveGameId = g.id;
   const full = await fetch(liveUrl('game/', { gameId: String(g.id) })).then(r => r.json());
   renderLiveFrom(normaliseLive(full.game || g));
   return LIVE_POLL_LIVE;
@@ -1451,11 +1488,15 @@ function renderLiveFrom(lv) {
   const card = document.getElementById('liveCard');
   if (!lv) return;                       // no match under way; the card stays hidden
 
+  // Home team first, so it sits rightmost in the RTL row.
   const here = lv.is_home ? 'הפועל תל אביב' : esc(lv.opponent);
   const there = lv.is_home ? esc(lv.opponent) : 'הפועל תל אביב';
-  const score = lv.is_home
-    ? `${lv.team_score}-${lv.opponent_score}`
-    : `${lv.opponent_score}-${lv.team_score}`;
+  // Each score is its own element rather than one "2-1" string. A combined string is
+  // laid out left-to-right inside a right-to-left row, so its LAST digit lands next to
+  // the FIRST team - Real Madrid 2-1 Inter read on screen as Madrid 1, Inter 2. Separate
+  // elements follow the row's direction, so each number stays beside its own club.
+  const hereScore = lv.is_home ? lv.team_score : lv.opponent_score;
+  const thereScore = lv.is_home ? lv.opponent_score : lv.team_score;
 
   const evts = lv.events || [];
   const line = (e, icon) => `<li>${icon}<span class="min">${esc(e.min)}'</span>
@@ -1466,7 +1507,9 @@ function renderLiveFrom(lv) {
 
   let html = `<div class="live-score">
       <span class="live-team">${here}</span>
-      <span class="live-num">${esc(score)}</span>
+      <span class="live-num">${esc(hereScore)}</span>
+      <span class="live-num live-dash">–</span>
+      <span class="live-num">${esc(thereScore)}</span>
       <span class="live-team">${there}</span>
     </div>
     <p class="sub live-meta">${esc(lv.competition || '')}${lv.status_text ? ' · ' + esc(lv.status_text) : ''}</p>`;
