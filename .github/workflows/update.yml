@@ -116,6 +116,23 @@ jobs:
       # enablement: true lets the action turn Pages on via the API using the pages:write
       # permission above, instead of depending on the repo setting having been made by
       # hand first - the first run failed for exactly that reason.
+      # Optional extra page for watching the live panel work against some other club's
+      # match, since Hapoel play about once a week. Reads the finished dashboard and writes
+      # a separate file, so site/index.html cannot be affected by it. continue-on-error
+      # because a test page is never worth failing a real deploy over.
+      - name: Publish the live-panel test page, if one is configured
+        continue-on-error: true
+        run: |
+          TEAM=$(python -c "import json;print(json.load(open('data/live_test.json')).get('team_id') or '')" 2>/dev/null || true)
+          NAME=$(python -c "import json;print(json.load(open('data/live_test.json')).get('name') or '')" 2>/dev/null || true)
+          if [ -n "$TEAM" ]; then
+            python scripts/make_live_test.py "$TEAM" "$NAME"
+            cp output/hta_live_test.html site/live-test.html
+            echo "live-test.html published, following competitor $TEAM ($NAME)"
+          else
+            echo "no live test configured - nothing extra published"
+          fi
+
       - uses: actions/configure-pages@v5
         with:
           enablement: true

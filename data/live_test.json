@@ -1,0 +1,5 @@
+{
+  "_why": "When team_id is set, the deploy also publishes /live-test.html following that club's live match, so the live panel can be watched working against a real game without waiting for Hapoel to play. Set back to {} to remove the page. Never affects the dashboard at / - see scripts/make_live_test.py.",
+  "team_id": 131,
+  "name": "ריאל מדריד"
+}
