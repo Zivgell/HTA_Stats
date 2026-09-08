@@ -589,6 +589,7 @@ ul.evt .min { color: var(--muted); font-variant-numeric: tabular-nums; min-width
 .live-score { display: flex; align-items: center; justify-content: center; gap: 14px;
   margin: 6px 0 2px; flex-wrap: wrap; }
 .live-team { font-weight: 600; }
+.sc-dash { opacity: .55; margin: 0 4px; }
 .live-dash { opacity:.55; font-weight:600; }
 .live-num { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .live-meta { text-align: center; margin: 0 0 6px; }
@@ -779,6 +780,16 @@ const SERIES = ['--series-1','--series-2','--series-3'];
   });
 })();
 
+/* A score is two numbers belonging to two teams, and this page is right-to-left.
+   Written as a single "4-0" string it is laid out as one left-to-right run, so its digits
+   land beside the WRONG team: the 4-0 win over Ramat Gan rendered as
+   "הפועל תל אביב 0-4 הפועל רמת גן", i.e. exactly backwards, for every match.
+   Separate elements follow the line's direction, so each number stays next to its own
+   side. Use this ANYWHERE a score sits beside a team name. A bare score in its own cell,
+   with no name to be confused with, is fine as plain text. */
+const scoreHtml = (a, b) =>
+  `<span class="sc">${esc(a)}</span><span class="sc sc-dash">–</span><span class="sc">${esc(b)}</span>`;
+
 const esc = s => String(s == null ? '' : s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
@@ -857,11 +868,13 @@ if (DATA.crest) {
    football on days when nothing was played. */
 (function () {
   const dt = DATA.data_through;
-  document.getElementById('dataThrough').textContent = dt
-    // Score BEFORE the opponent, separated by "מול". Written the other way round it read
-    // as the opponent's score: "הפועל רמת גן 4-0" looks like Ramat Gan won 4-0, when it
-    // was our 4-0 win over them. "4-0 מול הפועל רמת גן" can only be read one way.
-    ? `${L.data_through} ${dt.date.slice(8,10)}/${dt.date.slice(5,7)} · ${dt.score} ${L.vs} ${dt.opponent}`
+  // Score before the opponent and separated by "מול", with the two numbers as separate
+  // elements so our goals stay on our side of the dash. Written as one string next to the
+  // opponent's name it read as THEIR win.
+  const sc = String((dt && dt.score) || '').split('-');
+  document.getElementById('dataThrough').innerHTML = dt
+    ? `${esc(L.data_through)} ${esc(dt.date.slice(8,10))}/${esc(dt.date.slice(5,7))} · `
+      + `${scoreHtml(sc[0], sc[1])} ${esc(L.vs)} ${esc(dt.opponent)}`
     : '';
   document.getElementById('checkedAt').textContent = ` · ${L.checked_at} ${DATA.checked_at}`;
 })();
@@ -1321,8 +1334,8 @@ function openMatch(gid) {
   const awayName = m.is_home ? m.opponent : us;
   const homeGoals = m.is_home ? m.team_score : m.opponent_score;
   const awayGoals = m.is_home ? m.opponent_score : m.team_score;
-  document.getElementById('modalName').textContent =
-    `${homeName} ${homeGoals}-${awayGoals} ${awayName}`;
+  document.getElementById('modalName').innerHTML =
+    `<span>${esc(homeName)}</span> ${scoreHtml(homeGoals, awayGoals)} <span>${esc(awayName)}</span>`;
 
   let html = `<p class="sub">${esc(m.date)} · ${esc(m.competition)} · ${m.is_home ? esc(L.home) : esc(L.away)}</p>`;
 
