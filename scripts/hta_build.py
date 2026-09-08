@@ -858,7 +858,10 @@ if (DATA.crest) {
 (function () {
   const dt = DATA.data_through;
   document.getElementById('dataThrough').textContent = dt
-    ? `${L.data_through} ${dt.date.slice(8,10)}/${dt.date.slice(5,7)} (${dt.opponent} ${dt.score})`
+    // Score BEFORE the opponent, separated by "מול". Written the other way round it read
+    // as the opponent's score: "הפועל רמת גן 4-0" looks like Ramat Gan won 4-0, when it
+    // was our 4-0 win over them. "4-0 מול הפועל רמת גן" can only be read one way.
+    ? `${L.data_through} ${dt.date.slice(8,10)}/${dt.date.slice(5,7)} · ${dt.score} ${L.vs} ${dt.opponent}`
     : '';
   document.getElementById('checkedAt').textContent = ` · ${L.checked_at} ${DATA.checked_at}`;
 })();
@@ -1269,7 +1272,7 @@ wireChart('assistsComp', 'assisters', 'assists', 'hta-assists-comp');
   document.getElementById('matchBody').innerHTML = (DATA.matches || []).map(m => `
     <tr data-gid="${m.game_id}"><td>${esc(m.date)}</td><td>${esc(m.opponent)}</td>
     <td class="dim">${m.is_home ? esc(L.home) : esc(L.away)}</td>
-    <td class="res-${esc(m.result)}">${esc(m.team_score)}-${esc(m.opponent_score)}</td>
+    <td class="res-${esc(m.result)}"><bdi>${esc(m.team_score)}-${esc(m.opponent_score)}</bdi></td>
     <td class="dim">${esc(m.competition)}</td>
     <td>${m.clean_sheet ? '\\u2713' : ''}</td></tr>`).join('');
 
@@ -1310,9 +1313,16 @@ function openMatch(gid) {
       (e.assist ? ` <span class="sub">(${esc(L.assist_by)}: ${esc(e.assist)})</span>` : '') +
       `</li>`;
 
+  // Home team first with the HOME score first. This used to print our score first
+  // regardless, so an away win read as a defeat: 2-1 at Kiryat Shmona was titled
+  // "עירוני קרית שמונה 2-1 הפועל תל אביב", crediting them with our two goals.
+  const us = DATA.labels.title.split('—')[0].trim();
+  const homeName = m.is_home ? us : m.opponent;
+  const awayName = m.is_home ? m.opponent : us;
+  const homeGoals = m.is_home ? m.team_score : m.opponent_score;
+  const awayGoals = m.is_home ? m.opponent_score : m.team_score;
   document.getElementById('modalName').textContent =
-    `${m.is_home ? DATA.labels.title.split('—')[0].trim() : m.opponent} ${m.team_score}-${m.opponent_score} ` +
-    `${m.is_home ? m.opponent : DATA.labels.title.split('—')[0].trim()}`;
+    `${homeName} ${homeGoals}-${awayGoals} ${awayName}`;
 
   let html = `<p class="sub">${esc(m.date)} · ${esc(m.competition)} · ${m.is_home ? esc(L.home) : esc(L.away)}</p>`;
 
