@@ -590,6 +590,13 @@ ul.evt .min { color: var(--muted); font-variant-numeric: tabular-nums; min-width
   margin: 6px 0 2px; flex-wrap: wrap; }
 .live-team { font-weight: 600; }
 .sc-dash { opacity: .55; margin: 0 4px; }
+
+/* "Is there football today" badge, beside the header stamp. */
+.md { display: inline-block; border-radius: 999px; padding: 2px 11px; font-size: 12px;
+  font-weight: 700; border: 1px solid transparent; white-space: nowrap; }
+.md-on   { background: rgba(200,16,46,.14); color: var(--critical); border-color: rgba(200,16,46,.45); }
+.md-live { background: var(--critical); color: #fff; }
+.md-off  { color: var(--muted); border-color: var(--border); }
 .live-dash { opacity:.55; font-weight:600; }
 .live-num { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .live-meta { text-align: center; margin: 0 0 6px; }
@@ -668,6 +675,7 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; margin-t
   <div class="title-row">
     <span id="crestSlot"></span>
     <h1>__TITLE__</h1>
+    <span class="md" id="matchday" hidden></span>
     <span class="sub" id="stamp" title="">__SEASON__ · <span id="dataThrough"></span><span class="checked" id="checkedAt"></span></span>
     <button class="theme-btn" id="opsBtn" type="button" aria-pressed="false" hidden>מידע תחזוקה</button>
     <button class="theme-btn" id="themeBtn" type="button">מצב תצוגה</button>
@@ -1392,6 +1400,43 @@ function openPlayer(pid) {
   modal.showModal();
 }
 
+/* ---------- is there football today? ----------
+   Worked out here, in the reader's browser, from the fixture already in the page and the
+   device's own date. Deliberately NOT decided at build time: the page is rebuilt only on a
+   push or an unreliable cron, so a stored answer would sit there insisting "אין משחק היום"
+   while Monday's match kicked off. Computed, it is right whenever the page is opened, needs
+   no network, and therefore reads correctly on the Artifact copy too, which cannot fetch. */
+
+// The reader may be anywhere; the fixtures are Israeli. Always ask for the Israeli date.
+const ilToday = () => new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit',
+}).format(new Date());
+
+function renderMatchday(isLive) {
+  const el = document.getElementById('matchday');
+  if (!el) return;
+  const today = ilToday();
+  const nm = (DATA.schedule || {}).next_match;
+  const dt = DATA.data_through;
+
+  let text, cls;
+  if (isLive) {
+    text = L.live_now; cls = 'md md-live';
+  } else if (nm && nm.kickoff_local && nm.kickoff_local.slice(0, 10) === today) {
+    // Kickoff still ahead of us today.
+    text = `${L.matchday} · ${nm.kickoff_local.slice(11, 16)}`; cls = 'md md-on';
+  } else if (dt && dt.date === today) {
+    // 365scores drops a fixture once it kicks off, so after a rebuild later on match day the
+    // "next match" has already moved on. The newest ingested match still says it was today.
+    text = L.matchday; cls = 'md md-on';
+  } else {
+    text = L.no_match_today; cls = 'md md-off';
+  }
+  el.textContent = text;
+  el.className = cls;
+  el.hidden = false;
+}
+
 /* ---------- live match ----------
    The panel is driven by THIS PAGE asking 365scores for the score every 30 seconds, not
    by a server rebuilding and republishing the page. 365scores permits cross-origin reads
@@ -1505,7 +1550,10 @@ async function pollLive() {
   return LIVE_POLL_LIVE;
 }
 
-function hideLive() { document.getElementById('liveCard').hidden = true; }
+function hideLive() {
+  document.getElementById('liveCard').hidden = true;
+  renderMatchday(false);
+}
 
 function renderLiveFrom(lv) {
   const card = document.getElementById('liveCard');
@@ -1558,6 +1606,7 @@ function renderLiveFrom(lv) {
   badge.hidden = !playing && !lv.status_text;
   dot.hidden = !playing;
   card.hidden = false;
+  renderMatchday(playing);
 }
 
 // On load: paint the server-captured score straight away IF it is recent, so the panel is
@@ -1584,6 +1633,7 @@ try {
   const savedComp = localStorage.getItem('hta-comp');
   if (savedComp && (savedComp === 'total' || DATA.season.by_competition[savedComp])) activeComp = savedComp;
 } catch (e) {}
+renderMatchday(false);   // paint it immediately; the live poller upgrades it if a game is on
 startLive();
 renderTabs();
 renderHead();
