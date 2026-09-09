@@ -1413,6 +1413,10 @@ const ilToday = () => new Intl.DateTimeFormat('en-CA', {
 }).format(new Date());
 
 function renderMatchday(isLive) {
+  // Private surface only. Ziv wants this as internal information for himself, not on the
+  // public link he shares, so the flag is injected by build_artifact() and is absent from
+  // the GitHub Pages build. Absent flag, no badge.
+  if (!window.HTA_PRIVATE) return;
   const el = document.getElementById('matchday');
   if (!el) return;
   const today = ilToday();
@@ -1770,7 +1774,13 @@ def build_artifact(source: Path, path: Path) -> None:
         "<style>\n"
         "/* The host owns <html>/<body>, so direction is set here rather than on <html>. */\n"
         "body { direction: rtl; unicode-bidi: isolate; }\n"
-        "</style>"
+        "</style>\n"
+        # Marks this copy as the private one. The only thing it currently unlocks is the
+        # "is there a game today" badge, which is internal information for the owner and
+        # deliberately absent from the public GitHub Pages page that gets shared around.
+        # Set here rather than in the shared template so the public build cannot show it
+        # even by accident, and runs before the page's own script.
+        "<script>window.HTA_PRIVATE = true;</script>"
     )
     path.write_text(
         f"{head}\n{rtl_css}\n<div dir=\"rtl\" lang=\"he\">\n{body}\n</div>\n",
