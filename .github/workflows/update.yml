@@ -23,11 +23,25 @@ on:
     # Kept sparse on purpose. GitHub drops and delays most scheduled runs - observed firing
     # at 10:59, 17:10, 21:44 against configured :07/:37 slots - so a dense cron here would
     # be noise pretending to be a schedule.
-    # Every three hours across the window Israeli matches are played and finished in
-    # (17:00-23:00 UTC ~ 20:00-02:00 local), plus one mid-morning slot.
+    # Slot times here are TARGETS, not promises, and are set EARLY on purpose.
+    #
+    # Measured arrival vs configured slot over 09-07..09-10: 9, 65, 88, 99, 112, 120, 139,
+    # 147, 153, 162, 283 and 534 minutes late. Roughly two hours is typical and nine hours
+    # happens. So a slot does not say when the job runs, only the earliest it might.
+    #
+    # The last slot used to be 23:17 UTC (02:17 Israel) and kept landing at ~04:10 Israel
+    # two nights running - the middle of the night, for a page nobody is reading, with data
+    # that has not changed. It is now 19:17 UTC (22:17 Israel), which with the usual delay
+    # arrives around midnight local and, on the rare occasion it is punctual, still lands at
+    # a sane hour. Nothing is scheduled overnight any more.
+    #
+    #   08:17 UTC (11:17 local) - daytime recovery
+    #   17:17 UTC (20:17 local) - evening, before a typical kickoff finishes
+    #   19:17 UTC (22:17 local) - after a typical full time; lands ~midnight when delayed
+    #
     # Minute :17 rather than :00 - GitHub itself advises against the top of the hour,
     # where load is highest and drops are worst.
-    - cron: '17 8,17,20,23 * * *'
+    - cron: '17 8,17,19 * * *'
   workflow_dispatch:      # lets it be run by hand from the Actions tab
     inputs:
       demo_live:
