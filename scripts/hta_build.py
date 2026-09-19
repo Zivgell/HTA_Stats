@@ -25,6 +25,7 @@ from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from sources.api365 import OWN_GOAL_SUBTYPE
 from sources.common import DATA, OUTPUT, RESOURCES, load_config, read_json, setup_logging
 
 LOG = setup_logging("build")
@@ -122,6 +123,9 @@ def collect(cfg: dict) -> dict:
                 "player": e.get("player"),
                 "assist": e.get("extra_player"),
                 "shootout": bool(e.get("shootout")),
+                # Credited to us but scored by the other side's player, so without this the
+                # line reads as one of ours scoring - see OWN_GOAL_SUBTYPE in api365.py.
+                "own_goal": bool(e.get("own_goal")),
             }
             for e in (m.get("events") or [])
             if e.get("type_id") in (1, 2, 3)
@@ -235,6 +239,9 @@ def collect(cfg: dict) -> dict:
             "params": cfg["api365"]["params"],
             "team_id": cfg["team"]["competitor_id"],
             "live_status": 3,   # statusGroup 3 == in play; confirmed against live games
+            # Taken from the pipeline's own constant so the live panel and the ingested
+            # match agree on what an own goal looks like, rather than each hardcoding it.
+            "own_goal_subtype": OWN_GOAL_SUBTYPE,
         },
     }
 
@@ -251,6 +258,8 @@ SHEET_COLUMNS = [
     ("assists", "assists"), ("goal_involvements", "goal_involvements"),
     ("clean_sheets", "clean_sheets"), ("yellow", "yellow"),
     ("second_yellow", "second_yellow"), ("red", "red"),
+    ("penalty_won", "penalty_won"), ("penalty_missed", "penalty_missed"),
+    ("penalty_conceded", "penalty_conceded"), ("penalty_saves", "penalty_saves"),
     # avg_rating deliberately omitted - see the note in the roster COLS definition.
     ("minutes_per_goal", "minutes_per_goal"),
 ]
@@ -601,6 +610,14 @@ ul.evt .min { color: var(--muted); font-variant-numeric: tabular-nums; min-width
 .live-num { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .live-meta { text-align: center; margin: 0 0 6px; }
 .goal-ico { font-size: 13px; flex: none; }
+
+/* Own goals. Credited to us but scored by the other side, so they are called out rather
+   than left looking like one of our players scoring. */
+ul.evt li.og strong { color: var(--critical); }
+.og-tag { background: color-mix(in srgb, var(--critical) 18%, transparent);
+  color: var(--critical); border-radius: 999px; padding: 0 7px;
+  font-size: 11px; font-weight: 700; }
+.bar-row.og-row .lbl, .bar-row.og-row .val { color: var(--critical); }
 #matchBody tr { cursor: pointer; }
 
 /* ---------- phones ----------
@@ -797,6 +814,20 @@ const SERIES = ['--series-1','--series-2','--series-3'];
    with no name to be confused with, is fine as plain text. */
 const scoreHtml = (a, b) =>
   `<span class="sc">${esc(a)}</span><span class="sc sc-dash">–</span><span class="sc">${esc(b)}</span>`;
+
+/* One event line, used by BOTH the finished-match modal and the live panel. They had a copy
+   each and were already drifting; an own goal must look the same in both, so there is now
+   one of these.
+
+   An own goal is credited to the side it counts FOR, so one of ours names an opposing
+   player - on 2026-09-18 it named אור ישראלוב, who is in our own squad table and has since
+   moved to הפועל פתח תקוה. Marked red and labelled עצמי so it never reads as our goal. */
+const eventLine = (e, icon) =>
+  `<li class="${e.own_goal ? 'og' : ''}">${icon}<span class="min">${esc(e.min)}'</span>
+      <strong>${esc(e.player)}</strong>` +
+  (e.own_goal ? ` <span class="og-tag">${esc(L.own_goal)}</span>` : '') +
+  (e.assist ? ` <span class="sub">(${esc(L.assist_by)}: ${esc(e.assist)})</span>` : '') +
+  `</li>`;
 
 const esc = s => String(s == null ? '' : s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -1013,6 +1044,11 @@ const COLS = [
   { f: 'yellow', l: L.yellow },
   { f: 'second_yellow', l: L.second_yellow },
   { f: 'red', l: L.red },
+  // Penalties. A 0 here means the player was never involved in one - 365scores only
+  // reports these for players who were - so it is not a record of failure.
+  { f: 'penalty_won', l: L.penalty_won },
+  { f: 'penalty_missed', l: L.penalty_missed },
+  { f: 'penalty_conceded', l: L.penalty_conceded },
   // No avg_rating column: it averages only over matches that carry a rating, and says
   // nothing about how many that is - one player showed the squad's highest average off a
   // single 26-minute appearance. Per-match ratings are sound and are still used, in the
@@ -1123,7 +1159,7 @@ document.getElementById('search').addEventListener('input', e => {
 
 /* ---------- goalkeepers ---------- */
 (function () {
-  const keys = ['player','apps','starts','minutes','clean_sheets','goals_conceded','saves','save_pct'];
+  const keys = ['player','apps','starts','minutes','clean_sheets','goals_conceded','saves','save_pct','penalty_saves'];
   document.getElementById('gkHead').innerHTML =
     keys.map((k, i) => `<th class="${i === 0 ? 'name-col' : ''}">${esc(L[k] || k)}</th>`).join('');
   // Only keepers who actually played - the rest would be a wall of zeroes.
@@ -1133,20 +1169,26 @@ document.getElementById('search').addEventListener('input', e => {
     const pct = faced ? Math.round(1000 * r.saves / faced) / 10 : null;
     return `<tr><td class="name-col">${esc(r.name)}</td><td>${r.apps}</td><td>${r.starts}</td>
       <td>${r.minutes}</td><td>${r.clean_sheets}</td><td>${r.goals_conceded}</td>
-      <td>${r.saves}</td><td>${pct == null ? '–' : pct + '%'}</td></tr>`;
+      <td>${r.saves}</td><td>${pct == null ? '–' : pct + '%'}</td>
+      <td>${r.penalty_saves || 0}</td></tr>`;
   }).join('');
 })();
 
 /* ---------- bar charts ---------- */
-function barChart(el, rows, field, colorVar, leadEl) {
+// ownGoals: goals credited to Hapoel that no Hapoel player scored. Passed in rather than
+// injected as a row into season.total, because a synthetic player there would corrupt the
+// squad count, the main table and the search. Without it the chart silently fails to add
+// up - 20 player goals against a team total of 22.
+function barChart(el, rows, field, colorVar, leadEl, ownGoals) {
+  ownGoals = ownGoals || 0;
   const data = rows.filter(r => (r[field] || 0) > 0)
     .sort((a, b) => b[field] - a[field]).slice(0, 8);
-  if (!data.length) {
+  if (!data.length && !ownGoals) {
     el.innerHTML = '<p class="sub">אין נתונים עדיין.</p>';
     if (leadEl) leadEl.innerHTML = '';
     return;
   }
-  const max = data[0][field];
+  const max = Math.max(data.length ? data[0][field] : 0, ownGoals);
 
   if (leadEl) {
     // Ties are real - assists currently has three players level - and a single photo
@@ -1177,7 +1219,16 @@ function barChart(el, rows, field, colorVar, leadEl) {
       <span class="bar-track"><span class="bar-fill"
         style="width:${Math.round(100 * r[field] / max)}%;background:var(${colorVar})"></span></span>
       <span class="val">${r[field]}</span>
-    </div>`).join('');
+    </div>`).join('') +
+    // Last, and visually distinct: nobody in the squad scored these, so they are not a
+    // ranking entry. They are here so the column adds up to the team's goals.
+    (ownGoals ? `
+    <div class="bar-row og-row">
+      <span class="lbl">${esc(L.own_goals_row)}</span>
+      <span class="bar-track"><span class="bar-fill"
+        style="width:${Math.round(100 * ownGoals / max)}%;background:var(--critical)"></span></span>
+      <span class="val">${ownGoals}</span>
+    </div>` : '');
 }
 
 /* Each chart filters independently of the roster table's tab, so you can look at
@@ -1185,6 +1236,14 @@ function barChart(el, rows, field, colorVar, leadEl) {
 function competitionOptions() {
   return [{ id: 'total', name: L.all_competitions }].concat(
     (DATA.season.competitions || []).map(c => ({ id: String(c.id), name: c.name })));
+}
+
+// Own goals credited to us, for the competition currently selected in the chart.
+function ownGoalsFor(compId) {
+  const comps = (DATA.season && DATA.season.competitions) || [];
+  if (compId === 'total') return comps.reduce((n, c) => n + (c.own_goals_for || 0), 0);
+  const c = comps.find(x => String(x.id) === String(compId));
+  return c ? (c.own_goals_for || 0) : 0;
 }
 
 function wireChart(selectId, targetId, field, storageKey) {
@@ -1196,9 +1255,11 @@ function wireChart(selectId, targetId, field, storageKey) {
   try { saved = localStorage.getItem(storageKey); } catch (e) {}
   if (saved && opts.some(o => o.id === saved)) sel.value = saved;
 
+  // Only the scorers chart gets the own-goal row; an own goal is not an assist.
   const draw = () => barChart(document.getElementById(targetId),
                               rowsFor(sel.value), field, '--seq-450',
-                              document.getElementById(targetId + 'Lead'));
+                              document.getElementById(targetId + 'Lead'),
+                              field === 'goals' ? ownGoalsFor(sel.value) : 0);
   sel.addEventListener('change', () => {
     try { localStorage.setItem(storageKey, sel.value); } catch (e) {}
     draw();
@@ -1329,10 +1390,7 @@ function openMatch(gid) {
     : null;
   const motmRow = motm && DATA.season.total.find(r => String(r.player_id) === String(motm.pid));
 
-  const line = (e, icon) => `<li>${icon}<span class="min">${esc(e.min)}'</span>
-      <strong>${esc(e.player)}</strong>` +
-      (e.assist ? ` <span class="sub">(${esc(L.assist_by)}: ${esc(e.assist)})</span>` : '') +
-      `</li>`;
+  const line = eventLine;   // shared, so the modal and the live panel cannot diverge
 
   // Home team first with the HOME score first. This used to print our score first
   // regardless, so an away win read as a defeat: 2-1 at Kiryat Shmona was titled
@@ -1491,6 +1549,7 @@ function normaliseLive(g) {
       forTeam: e.competitorId,
       playerTeam: memTeam[e.playerId],
       player: names[e.playerId],
+      own_goal: (e.eventType || {}).subTypeName === DATA.live_api.own_goal_subtype,
       assist: (e.extraPlayers || []).length ? names[e.extraPlayers[0]] : null,
       // Past the end of extra time is a shootout, never a goal - same rule as the pipeline.
       shootout: (e.gameTime || 0) > 120,
@@ -1574,9 +1633,7 @@ function renderLiveFrom(lv) {
   const thereScore = lv.is_home ? lv.opponent_score : lv.team_score;
 
   const evts = lv.events || [];
-  const line = (e, icon) => `<li>${icon}<span class="min">${esc(e.min)}'</span>
-      <strong>${esc(e.player)}</strong>` +
-      (e.assist ? ` <span class="sub">(${esc(L.assist_by)}: ${esc(e.assist)})</span>` : '') + `</li>`;
+  const line = eventLine;   // shared, so the modal and the live panel cannot diverge
   const goals = evts.filter(e => e.type === 1);
   const cards = evts.filter(e => e.type === 2 || e.type === 3);
 

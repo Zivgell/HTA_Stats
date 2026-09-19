@@ -22,6 +22,9 @@ COUNTERS = (
     "apps", "starts", "bench_apps", "subbed_off", "minutes", "goals", "assists",
     "yellow", "second_yellow", "red", "clean_sheets", "goals_conceded", "saves",
     "unused_sub",
+    # 365scores reports these only for players actually involved in a penalty, so they are
+    # absent - not zero - in most matches. Summing absent as 0 is the correct reading.
+    "penalty_saves", "penalty_won", "penalty_conceded", "penalty_missed",
 )
 
 
@@ -78,6 +81,9 @@ def accumulate(matches: list[dict], cfg: dict) -> dict:
                 "matches": 0,
                 "w": 0, "d": 0, "l": 0,
                 "goals_for": 0, "goals_against": 0, "clean_sheets": 0,
+                # Goals credited to us that no Hapoel player scored. Tracked per competition
+                # so מובילי השערים still adds up when the chart is filtered to one.
+                "own_goals_for": 0,
             },
         )
         comp = competitions[comp_id]
@@ -90,6 +96,7 @@ def accumulate(matches: list[dict], cfg: dict) -> dict:
             comp["l"] += 1
         comp["goals_for"] += match.get("team_score") or 0
         comp["goals_against"] += match.get("opponent_score") or 0
+        comp["own_goals_for"] += match.get("own_goals_for") or 0
         if match.get("team_clean_sheet"):
             comp["clean_sheets"] += 1
 
@@ -128,6 +135,12 @@ def accumulate(matches: list[dict], cfg: dict) -> dict:
                     row["saves"] += player.get("saves") or 0
                     row["goals_conceded"] += player.get("goals_conceded") or 0
                     row["xg"] += player.get("xg") or 0.0
+                    # Absent in most matches rather than zero - 365scores attaches these
+                    # only to a player who was involved in a penalty - so `or 0` is doing
+                    # real work, not defending against a missing key that never happens.
+                    for pen in ("penalty_saves", "penalty_won",
+                                "penalty_conceded", "penalty_missed"):
+                        row[pen] += player.get(pen) or 0
                     row["clean_sheets"] += 1 if clean else 0
                     # 365scores uses -1 as "no rating given"; averaging it drags
                     # a real rating below zero, so only positive ratings count.

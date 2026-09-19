@@ -31,6 +31,15 @@ STATUS_STARTING = 1
 STATUS_SUBSTITUTE = 2
 STATUS_MISSING = 3
 
+# Goal sub-types, as 365scores spells them. An own goal is filed against the team it COUNTS
+# for, not the team the player belongs to - so one of these can name a player who is nothing
+# to do with us. On 2026-09-18 it named אור ישראלוב, who is in our own squad table from
+# earlier in the season and has since moved to הפועל פתח תקוה, scoring into his own net
+# against us. Attribution therefore keys off this sub-type and the crediting side, never off
+# "is the scorer one of our players" - that test would break at every transfer.
+OWN_GOAL_SUBTYPE = "עצמי"
+PENALTY_SUBTYPE = "פנדל"
+
 STATUS_GROUP_FINISHED = 4
 # 3 == in play. Read off live games on 2026-09-08 rather than guessed: 218 games that day
 # split 4/2/3 into finished, not-started and in-play. Testing "not finished" instead would
@@ -294,11 +303,19 @@ class Api365:
                     sub_off[extras[0]] = minute
 
             if etype in (EVENT_GOAL, EVENT_YELLOW, EVENT_RED, EVENT_SUBSTITUTION):
+                subtype = (ev.get("eventType") or {}).get("subTypeName")
                 events_out.append(
                     {
                         "minute": minute,
                         "type_id": etype,
                         "type": (ev.get("eventType") or {}).get("name"),
+                        "subtype": subtype,
+                        # An own goal reaches this list because it COUNTS for us, while the
+                        # player who put it in plays for the other side - so it would
+                        # otherwise read as one of our players scoring. Flagged here so the
+                        # page can say so instead of quietly listing a stranger as a scorer.
+                        "own_goal": subtype == OWN_GOAL_SUBTYPE,
+                        "penalty": subtype == PENALTY_SUBTYPE,
                         # Marked so a shootout conversion is never read back as a goal.
                         "shootout": minute is not None and minute > SHOOTOUT_AFTER_MINUTE,
                         "player_id": pid,
@@ -362,6 +379,13 @@ class Api365:
                     "saves": self._as_number(self._stat(member, "saves"), int) or 0,
                     "goals_conceded": self._as_number(self._stat(member, "goals_conceded"), int) or 0,
                     "xg": self._as_number(self._stat(member, "xg"), float) or 0.0,
+                    # 365scores attaches these only to a player who was involved in a
+                    # penalty, so they are simply absent from most matches rather than zero.
+                    # A goalkeeper showing 0 saves here has faced none, not failed to stop any.
+                    "penalty_saves": self._as_number(self._stat(member, "penalty_saves"), int) or 0,
+                    "penalty_won": self._as_number(self._stat(member, "penalty_won"), int) or 0,
+                    "penalty_conceded": self._as_number(self._stat(member, "penalty_conceded"), int) or 0,
+                    "penalty_missed": self._as_number(self._stat(member, "penalty_missed"), int) or 0,
                     "rating": rating,
                     "yellow": 1 if yellows else 0,
                     # Two yellows in one match is a second-yellow dismissal.
@@ -407,6 +431,13 @@ class Api365:
             "opponent_score": opp_score,
             "result": result,
             "team_clean_sheet": opp_score == 0 if opp_score is not None else None,
+            # Goals we were credited with that no Hapoel player scored. Counted here, at the
+            # match, so the season total can reconcile: player goals alone fall short of the
+            # team's goals-for by exactly these.
+            "own_goals_for": sum(
+                1 for e in events_out
+                if e["type_id"] == EVENT_GOAL and e["own_goal"] and not e["shootout"]
+            ),
             "players": players,
             "missing": missing,
             "events": sorted(events_out, key=lambda e: (e["minute"] is None, e["minute"])),

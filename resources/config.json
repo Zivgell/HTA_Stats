@@ -52,7 +52,12 @@
     "assists": 26,
     "saves": 23,
     "goals_conceded": 35,
-    "xg": 76
+    "xg": 76,
+    "_penalties": "365scores only attaches these to a player who was actually involved in a penalty, so they are absent from most matches. That is why a goalkeeper who has faced none shows no penalty stat at all rather than a zero.",
+    "penalty_saves": 44,
+    "penalty_won": 47,
+    "penalty_conceded": 48,
+    "penalty_missed": 49
   },
   "schedule": {
     "post_match_buffer_hours": 2,
