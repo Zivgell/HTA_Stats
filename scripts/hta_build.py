@@ -1213,22 +1213,24 @@ function barChart(el, rows, field, colorVar, leadEl, ownGoals) {
       </div>`;
   }
 
-  el.innerHTML = data.map(r => `
-    <div class="bar-row">
-      <span class="lbl">${esc(r.name)}</span>
+  // Own goals sit at the position their count earns, not pinned to the bottom, so the
+  // column reads as an ordered list. They are INSERTED into the top eight rather than
+  // competing for a place in it: nobody in the squad scored them, so they should never
+  // push a real scorer out of מובילי השערים.
+  const list = data.map(r => ({ label: r.name, value: r[field], og: false }));
+  if (ownGoals) {
+    const at = list.findIndex(x => x.value < ownGoals);
+    list.splice(at < 0 ? list.length : at, 0,
+                { label: L.own_goals_row, value: ownGoals, og: true });
+  }
+
+  el.innerHTML = list.map(x => `
+    <div class="bar-row${x.og ? ' og-row' : ''}">
+      <span class="lbl">${esc(x.label)}</span>
       <span class="bar-track"><span class="bar-fill"
-        style="width:${Math.round(100 * r[field] / max)}%;background:var(${colorVar})"></span></span>
-      <span class="val">${r[field]}</span>
-    </div>`).join('') +
-    // Last, and visually distinct: nobody in the squad scored these, so they are not a
-    // ranking entry. They are here so the column adds up to the team's goals.
-    (ownGoals ? `
-    <div class="bar-row og-row">
-      <span class="lbl">${esc(L.own_goals_row)}</span>
-      <span class="bar-track"><span class="bar-fill"
-        style="width:${Math.round(100 * ownGoals / max)}%;background:var(--critical)"></span></span>
-      <span class="val">${ownGoals}</span>
-    </div>` : '');
+        style="width:${Math.round(100 * x.value / max)}%;background:var(${x.og ? '--critical' : colorVar})"></span></span>
+      <span class="val">${x.value}</span>
+    </div>`).join('');
 }
 
 /* Each chart filters independently of the roster table's tab, so you can look at
