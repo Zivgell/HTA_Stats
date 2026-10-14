@@ -753,6 +753,14 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; margin-t
       <div id="assistersLead"></div>
       <div class="bars" id="assisters"></div>
     </section>
+    <section class="card">
+      <div class="card-head">
+        <h2>__L_INVOLVE__</h2>
+        <select class="mini-sel" id="involveComp" aria-label="__L_COMP__"></select>
+      </div>
+      <div id="involveLead"></div>
+      <div class="bars" id="involve"></div>
+    </section>
   </div>
 
   <section class="card">
@@ -1271,6 +1279,9 @@ function wireChart(selectId, targetId, field, storageKey) {
 
 wireChart('scorersComp', 'scorers', 'goals', 'hta-scorers-comp');
 wireChart('assistsComp', 'assisters', 'assists', 'hta-assists-comp');
+// Goals and assists combined. No own-goal row here on purpose: barChart only adds that for
+// the 'goals' field, and an own goal is nobody's involvement.
+wireChart('involveComp', 'involve', 'goal_involvements', 'hta-involve-comp');
 
 /* ---------- cards table ----------
    Competitions are grouped HERE ONLY: league and State Cup share a column, the Toto Cup
@@ -1794,6 +1805,7 @@ def build_html(ctx: dict, path: Path) -> None:
         "__L_GK__": lab.get("goalkeepers", ""),
         "__L_SCORERS__": lab.get("top_scorers", ""),
         "__L_ASSISTS__": lab.get("top_assists", ""),
+        "__L_INVOLVE__": lab.get("top_involvements", ""),
         "__L_CARDS__": lab.get("cards_table", ""),
         "__L_MATCHES__": lab.get("fixtures", ""),
         "__L_DATE__": lab.get("date", ""),
