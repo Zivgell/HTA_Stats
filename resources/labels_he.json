@@ -18,6 +18,7 @@
   "save_pct": "אחוז הצלות",
   "_penalties": "365scores reports these only for a player actually involved in a penalty, so a 0 means 'none faced/taken', not 'failed'. עצירות פנדל sits with the goalkeepers; the other three are outfield.",
   "penalty_saves": "עצירות פנדל",
+  "penalty_faced": "פנדלים מול השוער",
   "penalty_won": "סחט פנדל",
   "penalty_conceded": "גרם לפנדל",
   "penalty_missed": "החמיץ פנדל",

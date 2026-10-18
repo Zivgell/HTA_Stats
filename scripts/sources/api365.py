@@ -9,6 +9,7 @@ All parsing keys off stable numeric ids rather than Hebrew display strings:
 """
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -37,6 +38,10 @@ STATUS_MISSING = 3
 # earlier in the season and has since moved to הפועל פתח תקוה, scoring into his own net
 # against us. Attribution therefore keys off this sub-type and the crediting side, never off
 # "is the scorer one of our players" - that test would break at every transfer.
+# Stat values are display strings: "90'", "1(1פנ׳)", "0/1", "12/16 (75%)".
+_LEADING_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+_RATIO = re.compile(r"^(\d+)\s*/\s*(\d+)")
+
 OWN_GOAL_SUBTYPE = "עצמי"
 PENALTY_SUBTYPE = "פנדל"
 
@@ -151,16 +156,45 @@ class Api365:
 
     @staticmethod
     def _as_number(value, cast=int):
-        """Minutes arrive as \"90'\"; percentages and ratios as \"15/16 (94%)\"."""
+        """The LEADING number of whatever 365scores sent.
+
+        These values are display strings, not numbers, and the annotated forms carry real
+        data we were throwing away. Demanding the whole string parse meant every annotated
+        value became None and then, via the callers' `or 0`, a zero:
+
+            "1(1פנ׳)"    1 goal, one of them a penalty  -> was 0 goals
+            "0/1"          0 penalties saved of 1 faced   -> was 0, by luck also 0
+            "90'"          minutes                        -> parsed fine before and still does
+            "12/16 (75%)"  completed passes               -> 12, the numerator
+
+        Omri Altman's penalty against עירוני טבריה vanished this way, and would have kept
+        vanishing: it was the first penalty Hapoel scored all season. Taking the leading
+        number is right for every shape the feed actually uses - totals come first, and a
+        ratio's numerator is the figure we want.
+        """
         if value is None:
             return None
-        text = str(value).replace("'", "").strip()
-        if not text:
+        match = _LEADING_NUMBER.search(str(value))
+        if not match:
             return None
         try:
-            return cast(float(text))
+            return cast(float(match.group()))
         except ValueError:
             return None
+
+    @staticmethod
+    def _as_ratio(value):
+        """Split "saved/faced" into both halves; None when it is not a ratio.
+
+        Penalty saves arrive as a ratio, so the count alone cannot say whether a 0 means
+        "faced none" or "faced one and conceded".
+        """
+        if value is None:
+            return None, None
+        parts = _RATIO.match(str(value).strip())
+        if not parts:
+            return Api365._as_number(value, int), None
+        return int(parts.group(1)), int(parts.group(2))
 
     def _regulation_end(self, game: dict, all_events: list[dict]) -> int:
         """90, or 120 when extra time was played."""
@@ -353,6 +387,7 @@ class Api365:
                 continue  # coaching staff
 
             minutes = self._as_number(self._stat(member, "minutes"), int) or 0
+            pen_saved, pen_faced = self._as_ratio(self._stat(member, "penalty_saves"))
             started = status == STATUS_STARTING
             yellows = cards.get(pid, [])
             # -1 is the "no rating given" sentinel, not a score.
@@ -382,7 +417,10 @@ class Api365:
                     # 365scores attaches these only to a player who was involved in a
                     # penalty, so they are simply absent from most matches rather than zero.
                     # A goalkeeper showing 0 saves here has faced none, not failed to stop any.
-                    "penalty_saves": self._as_number(self._stat(member, "penalty_saves"), int) or 0,
+                    # A ratio, saved/faced - so both halves are kept. The count alone
+                    # cannot distinguish "faced none" from "faced one and conceded".
+                    "penalty_saves": pen_saved or 0,
+                    "penalty_faced": pen_faced or 0,
                     "penalty_won": self._as_number(self._stat(member, "penalty_won"), int) or 0,
                     "penalty_conceded": self._as_number(self._stat(member, "penalty_conceded"), int) or 0,
                     "penalty_missed": self._as_number(self._stat(member, "penalty_missed"), int) or 0,

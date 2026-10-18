@@ -24,7 +24,7 @@ COUNTERS = (
     "unused_sub",
     # 365scores reports these only for players actually involved in a penalty, so they are
     # absent - not zero - in most matches. Summing absent as 0 is the correct reading.
-    "penalty_saves", "penalty_won", "penalty_conceded", "penalty_missed",
+    "penalty_saves", "penalty_faced", "penalty_won", "penalty_conceded", "penalty_missed",
 )
 
 
@@ -138,7 +138,7 @@ def accumulate(matches: list[dict], cfg: dict) -> dict:
                     # Absent in most matches rather than zero - 365scores attaches these
                     # only to a player who was involved in a penalty - so `or 0` is doing
                     # real work, not defending against a missing key that never happens.
-                    for pen in ("penalty_saves", "penalty_won",
+                    for pen in ("penalty_saves", "penalty_faced", "penalty_won",
                                 "penalty_conceded", "penalty_missed"):
                         row[pen] += player.get(pen) or 0
                     row["clean_sheets"] += 1 if clean else 0

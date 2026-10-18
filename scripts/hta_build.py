@@ -260,6 +260,7 @@ SHEET_COLUMNS = [
     ("second_yellow", "second_yellow"), ("red", "red"),
     ("penalty_won", "penalty_won"), ("penalty_missed", "penalty_missed"),
     ("penalty_conceded", "penalty_conceded"), ("penalty_saves", "penalty_saves"),
+    ("penalty_faced", "penalty_faced"),
     # avg_rating deliberately omitted - see the note in the roster COLS definition.
     ("minutes_per_goal", "minutes_per_goal"),
 ]
@@ -1171,6 +1172,10 @@ document.getElementById('search').addEventListener('input', e => {
   document.getElementById('gkHead').innerHTML =
     keys.map((k, i) => `<th class="${i === 0 ? 'name-col' : ''}">${esc(L[k] || k)}</th>`).join('');
   // Only keepers who actually played - the rest would be a wall of zeroes.
+  // saved/faced rather than a bare count: a lone 0 cannot say whether he faced none
+  // or faced one and conceded - the hidden-denominator trap that retired ציון ממוצע.
+  const penSaves = r => (r.penalty_faced || 0)
+    ? `${r.penalty_saves || 0}/${r.penalty_faced}` : '–';
   const gks = DATA.season.total.filter(r => r.position === '\\u05E9\\u05D5\\u05E2\\u05E8' && r.apps > 0);
   document.getElementById('gkBody').innerHTML = gks.map(r => {
     const faced = (r.saves || 0) + (r.goals_conceded || 0);
@@ -1178,7 +1183,7 @@ document.getElementById('search').addEventListener('input', e => {
     return `<tr><td class="name-col">${esc(r.name)}</td><td>${r.apps}</td><td>${r.starts}</td>
       <td>${r.minutes}</td><td>${r.clean_sheets}</td><td>${r.goals_conceded}</td>
       <td>${r.saves}</td><td>${pct == null ? '–' : pct + '%'}</td>
-      <td>${r.penalty_saves || 0}</td></tr>`;
+      <td>${penSaves(r)}</td></tr>`;
   }).join('');
 })();
 
